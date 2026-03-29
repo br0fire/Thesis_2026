@@ -201,12 +201,21 @@ def get_seg_metrics_arrays(keys, metrics_dict):
             bg_clip_sim[i] = m.get("bg_clip_similarity", np.nan)
             bg_ssim[i] = m.get("bg_ssim", np.nan)
             fg_clip_score[i] = m.get("fg_clip_score", np.nan)
-    # Combined score: geometric mean of bg_ssim and fg_clip_score (delta embedding)
-    # fg_clip_score is bipolar: negative=source-like, positive=target-like
-    # Clamp to [0, 1] so negative (failed edits) score 0
+    # Combined score: geometric mean of normalized bg_ssim and fg_clip_score
+    # Both are min-max normalized to [0, 1] so they contribute equally
     valid = ~np.isnan(bg_ssim) & ~np.isnan(fg_clip_score)
     combined = np.full(n, np.nan)
-    combined[valid] = np.sqrt(np.clip(bg_ssim[valid], 0, 1) * np.clip(fg_clip_score[valid], 0, 1))
+
+    bg_v = np.clip(bg_ssim[valid], 0, None)
+    fg_v = np.clip(fg_clip_score[valid], 0, None)  # clamp negatives to 0
+
+    # Min-max normalize each to [0, 1]
+    bg_min, bg_max = bg_v.min(), bg_v.max()
+    fg_min, fg_max = fg_v.min(), fg_v.max()
+    bg_norm = (bg_v - bg_min) / (bg_max - bg_min + 1e-8)
+    fg_norm = (fg_v - fg_min) / (fg_max - fg_min + 1e-8)
+
+    combined[valid] = np.sqrt(bg_norm * fg_norm)
 
     return bg_clip_sim, bg_ssim, fg_clip_score, combined
 
@@ -486,7 +495,7 @@ def map_seg_metrics(coords, out_dir, bg_clip_sim, bg_ssim, fg_clip_score, combin
         (axes[0, 0], bg_ssim, "bg_ssim (background preservation)", "cividis"),
         (axes[0, 1], fg_clip_score, "fg_clip_score (prompt following)", "viridis"),
         (axes[1, 0], bg_clip_sim, "bg_clip_similarity", "plasma"),
-        (axes[1, 1], combined, "combined: sqrt(bg_ssim * fg_clip)", "RdYlGn"),
+        (axes[1, 1], combined, "combined: sqrt(norm_bg_ssim * norm_fg_clip)", "RdYlGn"),
     ]
     for ax, values, title, cmap in panels:
         valid = ~np.isnan(values)
