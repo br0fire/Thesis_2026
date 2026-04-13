@@ -15,6 +15,7 @@ RESULT_LOG=logs/post_analysis_final_done.log
 PENDING=(
     "catdog_v2" "car_taxi_v2" "sunflower_lavender_v2" "chair_throne_v2"
     "violin_guitar_v2clip"
+    "bgrich_teapot_globe" "bgrich_candle_crystal" "bgrich_typewriter_laptop"
 )
 
 MAX_WAIT_MIN=720

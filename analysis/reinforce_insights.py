@@ -26,6 +26,8 @@ EXPERIMENTS = [
     "catdog_v2", "car_taxi_v2", "sunflower_lavender_v2", "chair_throne_v2",
     "penguin_flamingo_v2", "cake_books_v2", "lighthouse_castle_v2", "violin_guitar_v2",
     "horse_v2", "room_v2", "snow_volcano_v2", "butterfly_hummingbird_v2", "sail_pirate_v2",
+    # Background-rich stress-test experiments
+    "bgrich_teapot_globe", "bgrich_candle_crystal", "bgrich_typewriter_laptop",
 ]
 
 
