@@ -68,18 +68,67 @@ def ssim_map(img1, img2, kernel, pad):
 
 
 # ────────────────────────────────────────────
-# CLIP GPU-side preprocessing (from metrics/calc_seg_metrics.py)
+# Vision model GPU-side preprocessing
 # ────────────────────────────────────────────
 
+# Normalization stats per family.
+# SigLIP / SigLIP2 use simple [-1, 1] range (mean/std = 0.5), CLIP uses ImageNet stats.
+CLIP_MEAN = [0.48145466, 0.4578275, 0.40821073]
+CLIP_STD = [0.26862954, 0.26130258, 0.27577711]
+SIGLIP_MEAN = [0.5, 0.5, 0.5]
+SIGLIP_STD = [0.5, 0.5, 0.5]
+
+
 def build_clip_transform(device, dtype=torch.float32):
-    mean = torch.tensor([0.48145466, 0.4578275, 0.40821073], device=device, dtype=dtype).view(1, 3, 1, 1)
-    std = torch.tensor([0.26862954, 0.26130258, 0.27577711], device=device, dtype=dtype).view(1, 3, 1, 1)
+    """Back-compat wrapper returning CLIP (ViT-B/32) normalization constants."""
+    mean = torch.tensor(CLIP_MEAN, device=device, dtype=dtype).view(1, 3, 1, 1)
+    std = torch.tensor(CLIP_STD, device=device, dtype=dtype).view(1, 3, 1, 1)
     return mean, std
 
 
-def clip_preprocess_gpu(images_01, clip_mean, clip_std):
-    x = F.interpolate(images_01, size=(224, 224), mode="bicubic", align_corners=False).clamp(0, 1)
+def build_vision_transform(device, model_family="siglip2", dtype=torch.float32):
+    """Return (mean, std) tensors for a given vision model family ('clip' or 'siglip2')."""
+    if model_family == "clip":
+        mean_vals, std_vals = CLIP_MEAN, CLIP_STD
+    else:  # siglip / siglip2
+        mean_vals, std_vals = SIGLIP_MEAN, SIGLIP_STD
+    mean = torch.tensor(mean_vals, device=device, dtype=dtype).view(1, 3, 1, 1)
+    std = torch.tensor(std_vals, device=device, dtype=dtype).view(1, 3, 1, 1)
+    return mean, std
+
+
+def clip_preprocess_gpu(images_01, clip_mean, clip_std, target_size=224):
+    """Back-compat wrapper — hardcoded 224 for CLIP ViT-B/32."""
+    x = F.interpolate(images_01, size=(target_size, target_size),
+                      mode="bicubic", align_corners=False).clamp(0, 1)
     return (x - clip_mean) / clip_std
+
+
+def vision_preprocess_gpu(images_01, mean, std, target_size):
+    """GPU-side resize + normalize for any vision model. Input: (B,3,H,W) in [0,1]."""
+    x = F.interpolate(images_01, size=(target_size, target_size),
+                      mode="bicubic", align_corners=False).clamp(0, 1)
+    return (x - mean) / std
+
+
+def _detect_model_family(model_name):
+    """Infer the preprocessing family from the HF model id."""
+    name = model_name.lower()
+    if "siglip" in name:
+        return "siglip2"  # siglip and siglip2 share the same normalization
+    return "clip"
+
+
+def _model_input_size(model_name):
+    """Infer the vision input resolution from the model name.
+    CLIP ViT-B/32: 224; SigLIP2 SO400M patch14-384: 384; SigLIP base-patch16-224: 224."""
+    # Try to parse "-patchN-RES" suffix (common HF naming convention)
+    import re
+    m = re.search(r"patch\d+-(\d+)", model_name)
+    if m:
+        return int(m.group(1))
+    # Fallback: CLIP ViT-B/32 is 224
+    return 224
 
 
 # ────────────────────────────────────────────
@@ -277,16 +326,23 @@ class DiffusionGenerator:
 # ────────────────────────────────────────────
 
 class RewardComputer:
-    """Computes reward from generated images using CLIP + SSIM on GPU."""
+    """Computes reward from generated images using a vision-language model + SSIM on GPU.
 
-    def __init__(self, device, source_image, bg_mask, source_prompt, target_prompt, img_size):
+    Supports CLIP (openai/clip-vit-*) and SigLIP/SigLIP2 (google/siglip*)."""
+
+    def __init__(self, device, source_image, bg_mask, source_prompt, target_prompt, img_size,
+                 vision_model="google/siglip2-so400m-patch14-384"):
         """
         Args:
             source_image: (1, 3, H, W) float32 tensor in [0,1] on device.
             bg_mask: (H, W) numpy array, 1=background, 0=foreground.
+            vision_model: HF model id for CLIP-style or SigLIP-style model.
         """
         self.device = device
         self.img_size = img_size
+        self.vision_model_name = vision_model
+        self.model_family = _detect_model_family(vision_model)
+        self.vis_input_size = _model_input_size(vision_model)
 
         # Background mask
         bg_mask_resized = Image.fromarray((bg_mask * 255).astype(np.uint8)).resize(
@@ -322,44 +378,53 @@ class RewardComputer:
         self.ssim_kernel = _gaussian_kernel_2d(11, 1.5, 3, device=device, dtype=torch.float32)
         self.ssim_pad = 5
 
-        # CLIP model
-        from transformers import CLIPModel, CLIPProcessor
-        print("Loading CLIP ViT-B/32 for reward computation...")
-        clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
-        clip_model.eval()
-        self.clip_vision = clip_model.vision_model
-        self.clip_proj = clip_model.visual_projection
-        self.clip_mean, self.clip_std = build_clip_transform(device)
+        # Vision-language model (CLIP or SigLIP / SigLIP2, unified via AutoModel/AutoProcessor)
+        from transformers import AutoModel, AutoProcessor
+        print(f"Loading vision-language model: {vision_model}")
+        print(f"  family={self.model_family}  input_size={self.vis_input_size}")
+        vl_model = AutoModel.from_pretrained(vision_model, torch_dtype=torch.float32).to(device)
+        vl_model.eval()
+        self.vl_model = vl_model
+        self.vis_mean, self.vis_std = build_vision_transform(
+            device, model_family=self.model_family)
 
-        # Pre-compute source background CLIP embedding
+        # Helper that uses the unified get_image_features / get_text_features API
+        def _image_embed(img_batch_preprocessed):
+            with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.float16):
+                emb = vl_model.get_image_features(pixel_values=img_batch_preprocessed)
+            return emb.float()
+
+        self._image_embed = _image_embed
+
+        # Pre-compute source background embedding
         source_bg = self.source_dev * self.bg_mask + self.gray * self.fg_mask
-        source_bg_clip = clip_preprocess_gpu(source_bg, self.clip_mean, self.clip_std)
-        with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.float16):
-            self.src_bg_emb = self.clip_proj(
-                self.clip_vision(pixel_values=source_bg_clip).pooler_output)
-        self.src_bg_emb = F.normalize(self.src_bg_emb.float(), p=2, dim=-1)
+        source_bg_pp = vision_preprocess_gpu(
+            source_bg, self.vis_mean, self.vis_std, self.vis_input_size)
+        self.src_bg_emb = F.normalize(_image_embed(source_bg_pp), p=2, dim=-1)
 
-        # Pre-compute delta text embedding (target - source direction)
-        processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+        # Pre-compute text embeddings
+        processor = AutoProcessor.from_pretrained(vision_model)
 
         def _get_text_emb(prompt):
-            t = processor(text=[prompt], return_tensors="pt", padding=True, truncation=True)
+            t = processor(text=[prompt], return_tensors="pt",
+                          padding="max_length", truncation=True)
             t = {k: v.to(device) for k, v in t.items()}
             with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.float16):
-                emb = clip_model.get_text_features(**t)
+                emb = vl_model.get_text_features(**t)
             return emb.float()
 
         src_text_emb = _get_text_emb(source_prompt)
         tgt_text_emb = _get_text_emb(target_prompt)
         # Delta direction (legacy reward type)
         self.text_emb = F.normalize(tgt_text_emb - src_text_emb, p=2, dim=-1)
-        # Individually normalized text embeddings (relative reward type)
+        # Individually normalized text embeddings (relative reward type — default)
         self.src_text_emb_norm = F.normalize(src_text_emb, p=2, dim=-1)
         self.tgt_text_emb_norm = F.normalize(tgt_text_emb, p=2, dim=-1)
 
-        del processor, clip_model
+        del processor
         torch.cuda.empty_cache()
-        print(f"  Reward computer ready. BG pixels: {int(self.bg_pixels)}/{img_size**2}")
+        print(f"  Reward computer ready. BG pixels: {int(self.bg_pixels)}/{img_size**2}  "
+              f"embed_dim={self.src_bg_emb.shape[-1]}")
 
     @torch.no_grad()
     def compute_rewards(self, images, alpha=0.5, reward_type="relative", clamp_fg=False):
@@ -379,19 +444,15 @@ class RewardComputer:
         smap = ssim_map(images, self.source_dev.expand(B, -1, -1, -1), self.ssim_kernel, self.ssim_pad)
         bg_ssim = (smap * self.bg_mask).sum(dim=(1, 2, 3)) / max(self.bg_pixels, 1.0)  # (B,)
 
-        # CLIP: bg + fg in one forward pass
+        # Vision-language model: bg + fg in one forward pass
         imgs_bg = images * self.bg_mask + self.gray * self.fg_mask
         imgs_fg_crop = images[:, :, self.fg_y1:self.fg_y2, self.fg_x1:self.fg_x2]
 
-        bg_clip_input = clip_preprocess_gpu(imgs_bg, self.clip_mean, self.clip_std)
-        fg_clip_input = clip_preprocess_gpu(imgs_fg_crop, self.clip_mean, self.clip_std)
-        combined = torch.cat([bg_clip_input, fg_clip_input], dim=0)  # (2B, 3, 224, 224)
+        bg_pp = vision_preprocess_gpu(imgs_bg, self.vis_mean, self.vis_std, self.vis_input_size)
+        fg_pp = vision_preprocess_gpu(imgs_fg_crop, self.vis_mean, self.vis_std, self.vis_input_size)
+        combined = torch.cat([bg_pp, fg_pp], dim=0)  # (2B, 3, S, S)
 
-        with torch.autocast(device_type="cuda", dtype=torch.float16):
-            pooled = self.clip_vision(pixel_values=combined).pooler_output
-            embs = self.clip_proj(pooled)
-        embs = F.normalize(embs.float(), p=2, dim=-1)
-
+        embs = F.normalize(self._image_embed(combined), p=2, dim=-1)
         fg_embs = embs[B:]
         if reward_type == "delta":
             fg_clip_score = (fg_embs * self.text_emb).sum(dim=-1)  # (B,)
@@ -515,6 +576,7 @@ def train_reinforce(args):
         f.write(f"seg: {args.seg_prompt or args.source_prompt}\n")
         f.write(f"reward_type: {args.reward_type}\n")
         f.write(f"alpha: {args.alpha}\n")
+        f.write(f"vision_model: {args.vision_model}\n")
 
     # ── Phase 3: Initialize reward computer ──
     print("\n=== Phase 3: Initialize reward computer ===")
@@ -525,6 +587,7 @@ def train_reinforce(args):
         source_prompt=args.source_prompt,
         target_prompt=args.target_prompt,
         img_size=args.height,
+        vision_model=args.vision_model,
     )
 
     # ── Phase 4: REINFORCE training ──
@@ -716,6 +779,10 @@ if __name__ == "__main__":
     # Segmentation
     p.add_argument("--seg_prompt", default=None, help="Prompt for CLIPSeg (defaults to source_prompt)")
     p.add_argument("--mask", default=None, help="Pre-computed background mask (.npy)")
+    # Vision-language model for reward
+    p.add_argument("--vision_model", default="google/siglip2-so400m-patch14-384",
+                   help="HF id for reward VLM. Supports CLIP (openai/clip-vit-*) and "
+                        "SigLIP/SigLIP2 (google/siglip*). Default: SigLIP2 SO400M @ 384.")
 
     args = p.parse_args()
     train_reinforce(args)
