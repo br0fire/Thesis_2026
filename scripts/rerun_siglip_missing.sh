@@ -15,7 +15,7 @@ NFS3=/home/jovyan/shares/SR006.nfs3/svgrozny
 MASKS=metrics/masks
 
 # All hyperparameters (num_episodes=300, min_episodes=200, plateau_patience=150,
-# entropy_stop=0.5, alpha=0.3, reward_type=relative, normalize_advantages=on) are defaults.
+# entropy_stop=0.5, alpha=0.3, normalize_advantages=on) are defaults.
 
 run_siglip2() {
     local GPU=$1

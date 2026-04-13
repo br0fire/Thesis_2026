@@ -415,11 +415,12 @@ class RewardComputer:
 
         src_text_emb = _get_text_emb(source_prompt)
         tgt_text_emb = _get_text_emb(target_prompt)
-        # Delta direction (legacy reward type)
+        # fg_clip is computed against the unit-length target-minus-source direction.
+        # This formula was unstable with CLIP ViT-B/32 (small ||t-s|| amplified noise),
+        # but is equivalent to (fg·tgt_norm - fg·src_norm) up to a constant scale when
+        # using SigLIP 2 SO400M — see analysis/reinforce_delta_vs_relative.py (pearson=1.0
+        # across 16 experiments).
         self.text_emb = F.normalize(tgt_text_emb - src_text_emb, p=2, dim=-1)
-        # Individually normalized text embeddings (relative reward type — default)
-        self.src_text_emb_norm = F.normalize(src_text_emb, p=2, dim=-1)
-        self.tgt_text_emb_norm = F.normalize(tgt_text_emb, p=2, dim=-1)
 
         del processor
         torch.cuda.empty_cache()
@@ -427,14 +428,12 @@ class RewardComputer:
               f"embed_dim={self.src_bg_emb.shape[-1]}")
 
     @torch.no_grad()
-    def compute_rewards(self, images, alpha=0.5, reward_type="relative", clamp_fg=False):
+    def compute_rewards(self, images, alpha=0.5):
         """Compute reward for a batch of images.
 
         Args:
             images: (B, 3, H, W) float32 in [0,1] on GPU.
             alpha: weight for bg_ssim vs fg_clip_score.
-            reward_type: "relative" (fg·tgt - fg·src) or "delta" (fg · normalize(tgt-src)).
-            clamp_fg: if True, clamp fg_clip_score below 0 (legacy behavior).
         Returns:
             (B,) reward tensor, bg_ssim array, fg_clip array.
         """
@@ -454,15 +453,11 @@ class RewardComputer:
 
         embs = F.normalize(self._image_embed(combined), p=2, dim=-1)
         fg_embs = embs[B:]
-        if reward_type == "delta":
-            fg_clip_score = (fg_embs * self.text_emb).sum(dim=-1)  # (B,)
-        else:  # "relative"
-            fg_to_tgt = (fg_embs * self.tgt_text_emb_norm).sum(dim=-1)
-            fg_to_src = (fg_embs * self.src_text_emb_norm).sum(dim=-1)
-            fg_clip_score = fg_to_tgt - fg_to_src  # (B,) in ~[-0.3, 0.3]
+        # fg alignment with the target-minus-source direction (unclamped — negative values
+        # correctly penalize misalignment).
+        fg_clip_score = (fg_embs * self.text_emb).sum(dim=-1)  # (B,)
 
-        fg_for_reward = fg_clip_score.clamp(min=0) if clamp_fg else fg_clip_score
-        rewards = alpha * bg_ssim + (1.0 - alpha) * fg_for_reward
+        rewards = alpha * bg_ssim + (1.0 - alpha) * fg_clip_score
         return rewards, bg_ssim, fg_clip_score
 
 
@@ -574,7 +569,6 @@ def train_reinforce(args):
         f.write(f"source: {args.source_prompt}\n")
         f.write(f"target: {args.target_prompt}\n")
         f.write(f"seg: {args.seg_prompt or args.source_prompt}\n")
-        f.write(f"reward_type: {args.reward_type}\n")
         f.write(f"alpha: {args.alpha}\n")
         f.write(f"vision_model: {args.vision_model}\n")
 
@@ -620,7 +614,7 @@ def train_reinforce(args):
         with torch.no_grad():
             images = generator.generate(masks)  # (B, 3, H, W)
             rewards, bg_ssim_vals, fg_clip_vals = reward_computer.compute_rewards(
-                images, args.alpha, reward_type=args.reward_type, clamp_fg=args.clamp_fg)
+                images, args.alpha)
 
         total_images += args.batch_size
         mean_reward = rewards.mean().item()
@@ -709,7 +703,7 @@ def train_reinforce(args):
     with torch.no_grad():
         all_images = generator.generate(all_masks)
         all_rewards, all_bg, all_fg = reward_computer.compute_rewards(
-            all_images, args.alpha, reward_type=args.reward_type, clamp_fg=args.clamp_fg)
+            all_images, args.alpha)
 
     # Sort by reward
     order = all_rewards.argsort(descending=True)
@@ -763,10 +757,6 @@ if __name__ == "__main__":
                    help="Hard cap. Empirically runs early-stop around ep 200-300 so 300 is a safe ceiling.")
     p.add_argument("--lr", type=float, default=0.1)
     p.add_argument("--alpha", type=float, default=0.3, help="Reward weight: alpha*bg_ssim + (1-alpha)*fg_clip")
-    p.add_argument("--reward_type", choices=["relative", "delta"], default="relative",
-                   help="relative: fg·tgt - fg·src (new default); delta: fg · normalize(tgt-src) (legacy)")
-    p.add_argument("--clamp_fg", action="store_true",
-                   help="Clamp fg_clip_score below zero to 0 (legacy behavior)")
     p.add_argument("--baseline_ema", type=float, default=0.9)
     p.add_argument("--entropy_coeff", type=float, default=0.05)
     p.add_argument("--normalize_advantages", action="store_true", default=True,

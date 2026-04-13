@@ -313,8 +313,9 @@ def build_top_images_grid(exp, out_path, top_k=10):
     best_r = exp["ckpt"].get("best_reward", 0)
     total = exp["ckpt"].get("total_images", 0)
     args = exp["ckpt"].get("args", {})
-    reward_type = args.get("reward_type", "delta") if isinstance(args, dict) else "delta"
-    title = f"{exp['name']}  |  best_reward={best_r:.4f}  |  {total} imgs  |  reward={reward_type}"
+    vmodel = args.get("vision_model", "clip-vit-b32") if isinstance(args, dict) else "clip-vit-b32"
+    vmodel_short = vmodel.split("/")[-1] if "/" in vmodel else vmodel
+    title = f"{exp['name']}  |  best_reward={best_r:.4f}  |  {total} imgs  |  {vmodel_short}"
     draw.text((12, 14), title, fill="black", font=title_font)
     # Legend for colored diff words
     legend_x = canvas_w - 270

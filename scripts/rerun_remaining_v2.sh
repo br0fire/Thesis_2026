@@ -33,7 +33,7 @@ run_reinforce() {
 
     echo "[$(date)] Starting ${NAME}${SUFFIX} on GPU ${GPU} → ${LOGFILE}"
     # All hyperparameters (num_episodes=300, plateau_patience=100, entropy_stop=0.5,
-    # alpha=0.3, entropy_coeff=0.05, reward_type=relative, normalize_advantages=on)
+    # alpha=0.3, entropy_coeff=0.05, normalize_advantages=on)
     # are now defaults in reinforce_search.py
     nohup $PYTHON -u generation/reinforce_search.py \
         --source_prompt "$SRC" \

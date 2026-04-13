@@ -93,12 +93,13 @@ $PYTHON generation/reinforce_search.py \
     --gpu 0 --n_bits 14 --batch_size 8 --top_k 10
 ```
 
-Uses ~1-2K images instead of 16K. Policy is N_BITS independent Bernoulli logit parameters optimized with REINFORCE. Reward is `alpha * bg_ssim + (1-alpha) * (fg · tgt_text - fg · src_text)`.
+Uses ~1-2K images instead of 16K. Policy is N_BITS independent Bernoulli logit parameters optimized with REINFORCE. Reward is `alpha * bg_ssim + (1-alpha) * fg · normalize(tgt_text - src_text)`.
 
-Defaults tuned from 17-experiment analysis:
-- `num_episodes=300` (empirically early-stop fires by ep 200-300)
-- `alpha=0.3`, `entropy_coeff=0.05`, `reward_type=relative` (unclamped)
-- `plateau_patience=100` — stop if best reward hasn't improved for 100 episodes
+Defaults (tuned from a 29-experiment analysis):
+- `vision_model=google/siglip2-so400m-patch14-384` (reward VLM; SigLIP 2 SO400M at 384px)
+- `num_episodes=300`, `min_episodes=200` floor before any early-stop
+- `alpha=0.3`, `entropy_coeff=0.05`
+- `plateau_patience=150` — stop if best reward hasn't improved for 150 episodes
 - `entropy_stop=0.5` — stop when policy entropy drops below 0.5
 - `normalize_advantages=True` (standardize per-batch for stable gradients)
 

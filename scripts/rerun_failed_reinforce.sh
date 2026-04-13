@@ -45,7 +45,6 @@ run_reinforce() {
         --batch_size $BATCH_SIZE \
         --top_k $TOP_K \
         --log_interval 10 \
-        --reward_type relative \
         --alpha 0.3 \
         --entropy_coeff 0.05 \
         --normalize_advantages \
