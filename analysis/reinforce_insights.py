@@ -15,9 +15,14 @@ import torch
 NFS3 = "/home/jovyan/shares/SR006.nfs3/svgrozny"
 
 EXPERIMENTS = [
+    # v1: CLIP + delta
     "test_catdog", "car_taxi", "sunflower_lavender", "chair_throne",
     "penguin_flamingo", "cake_books", "lighthouse_castle", "violin_guitar",
     "horse", "room", "snow_volcano", "butterfly_hummingbird", "sail_pirate",
+    # v2clip: CLIP + relative
+    "catdog_v2clip", "car_taxi_v2clip", "sunflower_lavender_v2clip", "chair_throne_v2clip",
+    "violin_guitar_v2clip",
+    # v2: SigLIP2 + relative
     "catdog_v2", "car_taxi_v2", "sunflower_lavender_v2", "chair_throne_v2",
     "penguin_flamingo_v2", "cake_books_v2", "lighthouse_castle_v2", "violin_guitar_v2",
     "horse_v2", "room_v2", "snow_volcano_v2", "butterfly_hummingbird_v2", "sail_pirate_v2",

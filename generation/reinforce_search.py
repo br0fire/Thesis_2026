@@ -671,14 +671,17 @@ def train_reinforce(args):
                   f"({total_images} imgs, {elapsed:.0f}s)", flush=True)
             print(f"         probs=[{probs_str}]", flush=True)
 
-        # Early stopping conditions (disabled when patience/threshold are 0)
-        if args.entropy_stop > 0 and entropy.item() < args.entropy_stop:
-            print(f"  Early stop at episode {ep}: entropy={entropy.item():.3f} < {args.entropy_stop}", flush=True)
-            break
-        if args.plateau_patience > 0 and episodes_since_improvement >= args.plateau_patience:
-            print(f"  Early stop at episode {ep}: no improvement in {episodes_since_improvement} episodes "
-                  f"(best_reward={best_reward:.4f})", flush=True)
-            break
+        # Early stopping conditions (disabled when patience/threshold are 0).
+        # Both conditions respect --min_episodes so the policy has time to explore before
+        # declaring convergence.
+        if ep >= args.min_episodes:
+            if args.entropy_stop > 0 and entropy.item() < args.entropy_stop:
+                print(f"  Early stop at episode {ep}: entropy={entropy.item():.3f} < {args.entropy_stop}", flush=True)
+                break
+            if args.plateau_patience > 0 and episodes_since_improvement >= args.plateau_patience:
+                print(f"  Early stop at episode {ep}: no improvement in {episodes_since_improvement} episodes "
+                      f"(best_reward={best_reward:.4f})", flush=True)
+                break
 
     log_file.close()
     elapsed = time.perf_counter() - t_start
@@ -770,10 +773,14 @@ if __name__ == "__main__":
                    help="Standardize advantages per batch (default on; use --no-normalize_advantages to disable)")
     p.add_argument("--no-normalize_advantages", dest="normalize_advantages", action="store_false")
     # Early-stop criteria
+    p.add_argument("--min_episodes", type=int, default=200,
+                   help="Minimum episodes before any early-stop condition is checked.")
     p.add_argument("--entropy_stop", type=float, default=0.5,
                    help="Stop when policy entropy drops below this value. Set 0 to disable.")
-    p.add_argument("--plateau_patience", type=int, default=100,
-                   help="Stop if best_reward has not improved for this many episodes. Set 0 to disable.")
+    p.add_argument("--plateau_patience", type=int, default=150,
+                   help="Stop if best_reward has not improved for this many episodes. "
+                        "Raised from 100 after SigLIP2 runs early-stopped at ep 113 with the stricter value. "
+                        "Set 0 to disable.")
     p.add_argument("--top_k", type=int, default=10)
     p.add_argument("--log_interval", type=int, default=10)
     # Segmentation
