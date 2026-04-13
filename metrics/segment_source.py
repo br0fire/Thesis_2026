@@ -260,7 +260,7 @@ def main():
     p.add_argument("--dilate", type=int, default=15, help="Dilation radius (px) around object")
     p.add_argument("--threshold", type=float, default=0.5, help="CLIPSeg threshold (only for --method clipseg)")
     p.add_argument("--sam_checkpoint", default=None, help="Path to SAM checkpoint (.pth)")
-    p.add_argument("--output", default="background_mask.npy")
+    p.add_argument("--output", default="masks/background_mask.npy")
     p.add_argument("--save_vis", action="store_true", help="Save visualization of the mask")
     args = p.parse_args()
 

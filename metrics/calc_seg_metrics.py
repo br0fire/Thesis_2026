@@ -7,7 +7,6 @@ resume support, streaming CSV output.
 Metrics:
   Background preservation:
     - bg_clip_similarity: CLIP cosine sim (masked-bg generated vs masked-bg source)
-    - bg_mse: pixel MSE on background only
     - bg_ssim: SSIM on background only
   Prompt following:
     - fg_clip_score: CLIP cosine sim (foreground-only generated vs target prompt)
@@ -177,7 +176,7 @@ def worker_fn(rank, gpu_id, image_paths, shared_args, output_path, progress_queu
         processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
         def _get_text_emb(prompt):
-            t = processor(text=[prompt], return_tensors="pt", padding=True)
+            t = processor(text=[prompt], return_tensors="pt", padding=True, truncation=True)
             t = {k: v.to(device) for k, v in t.items()}
             with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.float16):
                 emb = clip_model.get_text_features(**t)
@@ -210,7 +209,7 @@ def worker_fn(rank, gpu_id, image_paths, shared_args, output_path, progress_queu
         # ── Process ──
         with open(output_path, "w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["filename", "bg_clip_similarity", "bg_mse", "bg_ssim", "fg_clip_score"])
+            w.writerow(["filename", "bg_clip_similarity", "bg_ssim", "fg_clip_score"])
             buf = []
 
             for names_batch, img_tensors in dataloader:
@@ -219,10 +218,6 @@ def worker_fn(rank, gpu_id, image_paths, shared_args, output_path, progress_queu
 
                 B = img_tensors.shape[0]
                 imgs = img_tensors.to(device, non_blocking=True)  # (B,3,H,W) [0,1]
-
-                # ── MSE on background ──
-                diff_sq = (imgs - source_dev) ** 2 * bg_mask_dev
-                bg_mse = diff_sq.sum(dim=(1, 2, 3)) / (bg_pixels * 3)
 
                 # ── SSIM on background ──
                 with torch.no_grad():
@@ -252,7 +247,6 @@ def worker_fn(rank, gpu_id, image_paths, shared_args, output_path, progress_queu
                 fg_clip_score = (fg_embs * text_emb).sum(dim=-1)
 
                 # ── To CPU + write ──
-                bg_mse_np = bg_mse.cpu().numpy()
                 bg_ssim_np = bg_ssim.cpu().numpy()
                 bg_clip_np = bg_clip_sim.cpu().numpy()
                 fg_clip_np = fg_clip_score.cpu().numpy()
@@ -261,7 +255,6 @@ def worker_fn(rank, gpu_id, image_paths, shared_args, output_path, progress_queu
                     buf.append([
                         name,
                         f"{bg_clip_np[k]:.6f}",
-                        f"{bg_mse_np[k]:.6f}",
                         f"{bg_ssim_np[k]:.6f}",
                         f"{fg_clip_np[k]:.6f}",
                     ])
@@ -312,13 +305,13 @@ def load_done_set(csv_path):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--source_image", default="istanbul-cats-history.jpg")
-    p.add_argument("--mask", default="background_mask.npy")
+    p.add_argument("--mask", default="masks/background_mask.npy")
     p.add_argument("--source_prompt", default="tabby kitten walking confidently across a stone pavement.",
                    help="Source prompt (for delta direction)")
     p.add_argument("--target_prompt", default="tabby dog walking confidently across a stone pavement.",
                    help="Target prompt (for delta direction)")
     p.add_argument("--images_dir", default="/home/jovyan/shares/SR006.nfs3/svgrozny/generated_samples_40step")
-    p.add_argument("--output_csv", default="seg_metrics.csv")
+    p.add_argument("--output_csv", default="results/seg_metrics.csv")
     p.add_argument("--batch_size", type=int, default=256, help="Per-GPU batch size")
     p.add_argument("--num_workers", type=int, default=8, help="DataLoader workers per GPU")
     p.add_argument("--gpus", default="4,5,6,7", help="Comma-separated GPU IDs")
@@ -441,7 +434,7 @@ def main():
     with open(out_path, mode, newline="") as f_out:
         w = csv.writer(f_out)
         if mode == "w":
-            w.writerow(["filename", "bg_clip_similarity", "bg_mse", "bg_ssim", "fg_clip_score"])
+            w.writerow(["filename", "bg_clip_similarity", "bg_ssim", "fg_clip_score"])
         for tmp in tmp_outputs:
             if os.path.isfile(tmp):
                 with open(tmp, newline="") as f_in:
@@ -454,7 +447,7 @@ def main():
     import pandas as pd
     df = pd.read_csv(out_path)
     print(f"\nSaved {out_path}: {len(df)} rows")
-    for col in ["bg_clip_similarity", "bg_mse", "bg_ssim", "fg_clip_score"]:
+    for col in ["bg_clip_similarity", "bg_ssim", "fg_clip_score"]:
         print(f"  {col}: mean={df[col].mean():.4f}  std={df[col].std():.4f}")
 
 

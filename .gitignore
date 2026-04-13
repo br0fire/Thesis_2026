@@ -90,9 +90,19 @@ dmypy.json
 *.csv
 *.jpg
 *.png
+*.pptx
+
+# Generated data subdirectories
+generation/data/
+metrics/masks/
+metrics/results/
+analysis/embeddings/
 
 # Trash
 trash/
+
+# Logs
+logs/
 
 # System
 .claude/

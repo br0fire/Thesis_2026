@@ -6,7 +6,6 @@ import torch.multiprocessing as mp
 from PIL import Image
 from torch.optim.adam import Adam
 from tqdm import tqdm
-import pickle
 from concurrent.futures import ThreadPoolExecutor
 import warnings
 
@@ -244,7 +243,7 @@ def prepare_shared_data(source_prompt, target_prompt, image_path, steps, device_
 # 3. WORKER (Без сохранения trajectory logs)
 # ==========================================
 
-def worker_fn(rank, gpu_ids, shared_data, masks_chunk, global_indices_chunk, steps, latents_queue, progress_queue, output_dir):
+def worker_fn(rank, gpu_ids, shared_data, masks_chunk, global_indices_chunk, steps, progress_queue, output_dir):
     try:
         gpu_id = gpu_ids[rank]
         device = torch.device(f"cuda:{gpu_id}")
@@ -268,16 +267,6 @@ def worker_fn(rank, gpu_ids, shared_data, masks_chunk, global_indices_chunk, ste
         # channels_last for better tensor core utilization on A100
         pipeline.unet = pipeline.unet.to(memory_format=torch.channels_last)
         pipeline.unet = torch.compile(pipeline.unet, mode="max-autotune", fullgraph=False)
-        # DINOv2 setup
-        dinov2 = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14', force_reload=False).to(device)
-        dinov2.eval()
-        dinov2 = torch.compile(dinov2, mode="max-autotune", fullgraph=False)
-
-        # GPU-side normalization constants for DINOv2
-        dino_mean = torch.tensor([0.485, 0.456, 0.406], device=device).view(1, 3, 1, 1)
-        dino_std = torch.tensor([0.229, 0.224, 0.225], device=device).view(1, 3, 1, 1)
-
-        features_local = {}
 
         dtype = torch.float16
         inv_latent = shared_data["inv_latent"].to(device, dtype=dtype)
@@ -296,7 +285,7 @@ def worker_fn(rank, gpu_ids, shared_data, masks_chunk, global_indices_chunk, ste
 
         import time
         t_unet_total = 0.0
-        t_vae_dino_total = 0.0
+        t_vae_total = 0.0
         t_save_total = 0.0
         n_batches = 0
         print(f"[GPU {gpu_id}] Processing {num_samples} paths...")
@@ -332,33 +321,26 @@ def worker_fn(rank, gpu_ids, shared_data, masks_chunk, global_indices_chunk, ste
             torch.cuda.synchronize(device)
             t_unet_total += time.perf_counter() - t0_unet
 
-            # --- DECODING + DINOv2 ON GPU (no CPU roundtrip) ---
+            # --- DECODING ---
             t0_vae = time.perf_counter()
             with torch.inference_mode():
                 final_latents = final_latents.to(dtype=pipeline.vae.dtype) / pipeline.vae.config.scaling_factor
                 decoded = pipeline.vae.decode(final_latents, return_dict=False)[0]
                 images_gpu = (decoded / 2 + 0.5).clamp(0, 1)  # (B, 3, 512, 512) [0,1]
 
-                # DINOv2 features directly on GPU — skip CPU→PIL→transforms→GPU roundtrip
-                dino_input = nnf.interpolate(images_gpu.float(), size=224, mode='bilinear', align_corners=False)
-                dino_input = (dino_input - dino_mean) / dino_std
-                feats = dinov2(dino_input)
-                feats = feats.float().cpu().numpy().astype(np.float32)
-
-                # Now move images to CPU for JPEG saving
+                # Move images to CPU for JPEG saving
                 images_np = images_gpu.cpu().permute(0, 2, 3, 1).numpy()
                 images_np = (images_np * 255).round().astype("uint8")
             torch.cuda.synchronize(device)
-            t_vae_dino_total += time.perf_counter() - t0_vae
+            t_vae_total += time.perf_counter() - t0_vae
 
             # Vectorized filenames
             mask_ints = mask_to_int_batch(batch_masks_np)
             fname_list = [f"path_{batch_indices[j]:05d}_b{mask_ints[j]}.jpg" for j in range(current_bs)]
 
-            # Store features + submit async JPEG saves
+            # Submit async JPEG saves
             pil_list = [Image.fromarray(images_np[k]) for k in range(current_bs)]
             for k in range(current_bs):
-                features_local[fname_list[k]] = feats[k]
                 out_path = os.path.join(output_dir, fname_list[k])
                 save_futures.append(save_executor.submit(_save_image, pil_list[k], out_path))
 
@@ -372,19 +354,12 @@ def worker_fn(rank, gpu_ids, shared_data, masks_chunk, global_indices_chunk, ste
         save_executor.shutdown(wait=True)
 
         # Timing report
-        total_time = t_unet_total + t_vae_dino_total + t_save_total
+        total_time = t_unet_total + t_vae_total + t_save_total
         print(f"[GPU {gpu_id}] Timing ({n_batches} batches, {num_samples} imgs):")
         print(f"  UNet sampling: {t_unet_total:.1f}s ({100*t_unet_total/total_time:.0f}%)")
-        print(f"  VAE+DINOv2:    {t_vae_dino_total:.1f}s ({100*t_vae_dino_total/total_time:.0f}%)")
+        print(f"  VAE decode:    {t_vae_total:.1f}s ({100*t_vae_total/total_time:.0f}%)")
         print(f"  Save wait:     {t_save_total:.1f}s ({100*t_save_total/total_time:.0f}%)")
         print(f"  Throughput:    {num_samples/total_time:.2f} img/s (excl. warmup)")
-
-        # Сохраняем только фичи
-        feat_save_path = f"temp_features_rank_{rank}.pkl"
-        with open(feat_save_path, "wb") as f:
-            pickle.dump(features_local, f, protocol=pickle.HIGHEST_PROTOCOL)
-
-        latents_queue.put(feat_save_path)
 
         print(f"[GPU {gpu_id}] Finished.")
 
@@ -427,10 +402,6 @@ def run_targeted_search(source_prompt, target_prompt, input_image, steps_total, 
     torch.cuda.set_device(gpu_ids[0])
     torch.cuda.empty_cache()
 
-    # Pre-download DINOv2 to cache before spawning workers (avoids race condition)
-    print("Pre-downloading DINOv2...")
-    torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14', force_reload=False)
-
     # Запуск процессов
     print(f"\n--- Phase 2: Distributed Sampling ({len(gpu_ids)} GPUs) ---")
     num_gpus = len(gpu_ids)
@@ -439,7 +410,6 @@ def run_targeted_search(source_prompt, target_prompt, input_image, steps_total, 
     chunks_indices = np.array_split(global_indices, num_gpus)
     
     ctx = mp.get_context('spawn')
-    queue = ctx.Queue()
     progress_queue = ctx.Queue()
     processes = []
 
@@ -447,7 +417,7 @@ def run_targeted_search(source_prompt, target_prompt, input_image, steps_total, 
         p = ctx.Process(
             target=worker_fn,
             args=(rank, gpu_ids, shared_data, chunks_masks[rank], chunks_indices[rank],
-                  steps_total, queue, progress_queue, output_dir)
+                  steps_total, progress_queue, output_dir)
         )
         p.daemon = True
         p.start()
@@ -467,40 +437,17 @@ def run_targeted_search(source_prompt, target_prompt, input_image, steps_total, 
             except:
                 pass
 
-    print("Merging feature logs...")
-    
     for p in processes:
         p.join()
 
-    collected_files = []
-    while not queue.empty():
-        collected_files.append(queue.get())
-    
-    pkl_files = [p for p in collected_files if p.endswith(".pkl")]
-    
-    # Merge features
-    feature_dict = {}
-    for fp in pkl_files:
-        try:
-            with open(fp, "rb") as f:
-                d = pickle.load(f)
-            feature_dict.update(d)
-            os.remove(fp)
-        except Exception as e:
-            print(f"Error loading features {fp}: {e}")
-    
-    feat_path = os.path.join(output_dir, "feature_dictionary.pkl")
-    with open(feat_path, "wb") as f:
-        pickle.dump(feature_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
-
-    print(f"Features saved to {feat_path}")
+    print("Generation complete.")
     return
 
 if __name__ == "__main__":
     # --- Настройки ---
     s_prompt = "tabby kitten walking confidently across a stone pavement."
     t_prompt = "tabby dog walking confidently across a stone pavement."
-    img_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "istanbul-cats-history.jpg")
+    img_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "istanbul-cats-history.jpg")
     
     STEPS = 40
     MASK_BITS = 20  # search space; each bit is repeated STEPS//MASK_BITS times

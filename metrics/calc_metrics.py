@@ -88,7 +88,7 @@ def main():
     p.add_argument("--source_image", default="istanbul-cats-history.jpg")
     p.add_argument("--target_prompt", default="tabby dog walking confidently across a stone pavement.")
     p.add_argument("--images_dir", default="/home/jovyan/shares/SR006.nfs3/svgrozny/generated_samples")
-    p.add_argument("--output_csv", default="metrics.csv")
+    p.add_argument("--output_csv", default="results/metrics.csv")
     p.add_argument("--batch_size", type=int, default=256)
     p.add_argument("--num_workers", type=int, default=16, help="DataLoader workers for parallel load+preprocess.")
     p.add_argument("--device", default=None)

@@ -154,10 +154,10 @@ def get_image_list(images_dir):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--source_image", default="istanbul-cats-history.jpg")
-    p.add_argument("--mask", default="background_mask.npy", help="Background mask from segment_source.py")
+    p.add_argument("--mask", default="masks/background_mask.npy", help="Background mask from segment_source.py")
     p.add_argument("--target_prompt", default="tabby dog walking confidently across a stone pavement.")
     p.add_argument("--images_dir", default="/home/jovyan/shares/SR006.nfs3/svgrozny/generated_samples")
-    p.add_argument("--output_csv", default="bg_metrics.csv")
+    p.add_argument("--output_csv", default="results/bg_metrics.csv")
     p.add_argument("--batch_size", type=int, default=128)
     p.add_argument("--num_workers", type=int, default=16)
     p.add_argument("--device", default=None)

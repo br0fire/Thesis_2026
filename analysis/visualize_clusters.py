@@ -24,7 +24,7 @@ from sklearn.preprocessing import normalize
 
 
 # -------------------- config --------------------
-EMB_PATH = "feature_dictionary.pkl"
+EMB_PATH = "embeddings/feature_dictionary.pkl"
 IMAGES_ROOT = "/home/jovyan/shares/SR006.nfs3/svgrozny/generated_samples_40step"
 OUT_DIR = "visualizations"
 COORDS_PATH = "coords.npy"
@@ -33,7 +33,7 @@ LABELS_PATH = "labels.npy"
 PCA_DIM = 64
 HDBSCAN_MIN_CLUSTER_SIZE = 5000
 HDBSCAN_MIN_SAMPLES = 100
-N_BITS = 20
+N_BITS = int(os.environ.get("N_BITS", 14))
 BIT0_IS_STEP0 = False
 THUMB = 160
 TOP_N_CLUSTERS = 20
@@ -67,8 +67,16 @@ def b_to_bits_20(b: int) -> np.ndarray:
 
 def quadrant_ones(b: int):
     bits = b_to_bits_20(b)
-    return (int(bits[0:5].sum()), int(bits[5:10].sum()),
-            int(bits[10:15].sum()), int(bits[15:20].sum()))
+    q = N_BITS // 4
+    r = N_BITS % 4
+    # Split bits into 4 roughly equal groups
+    sizes = [q + (1 if i < r else 0) for i in range(4)]
+    result = []
+    pos = 0
+    for s in sizes:
+        result.append(int(bits[pos:pos+s].sum()))
+        pos += s
+    return tuple(result)
 
 
 # -------------------- data loading --------------------
@@ -135,8 +143,11 @@ def _assign_noise_to_nearest(coords, labels):
     return labels
 
 
-def _compute_labels(coords, gpu_id=0):
+def _compute_labels(coords, gpu_id=0, min_cluster_size=None, min_samples=None):
     """Cluster with GPU HDBSCAN (cuML), fallback to sklearn. Noise assigned to nearest cluster."""
+    mcs = min_cluster_size or HDBSCAN_MIN_CLUSTER_SIZE
+    ms = min_samples or HDBSCAN_MIN_SAMPLES
+    print(f"  HDBSCAN params: min_cluster_size={mcs}, min_samples={ms}")
     labels = None
     try:
         import cupy as cp
@@ -144,8 +155,8 @@ def _compute_labels(coords, gpu_id=0):
         print(f"  Using GPU HDBSCAN (cuML) on cuda:{gpu_id}...")
         with cp.cuda.Device(gpu_id):
             clusterer = HDBSCAN(
-                min_cluster_size=HDBSCAN_MIN_CLUSTER_SIZE,
-                min_samples=HDBSCAN_MIN_SAMPLES,
+                min_cluster_size=mcs,
+                min_samples=ms,
                 output_type="numpy",
             )
             labels = clusterer.fit_predict(coords.astype(np.float32))
@@ -157,8 +168,8 @@ def _compute_labels(coords, gpu_id=0):
     if labels is None:
         from sklearn.cluster import HDBSCAN as skHDBSCAN
         labels = skHDBSCAN(
-            min_cluster_size=HDBSCAN_MIN_CLUSTER_SIZE,
-            min_samples=HDBSCAN_MIN_SAMPLES,
+            min_cluster_size=mcs,
+            min_samples=ms,
         ).fit_predict(coords)
 
     n_noise = (labels == -1).sum()
@@ -189,8 +200,22 @@ def load_seg_metrics_csv(path: str):
     return out
 
 
+def _combined_score(bg_arr, fg_arr):
+    """Geometric mean of min-max normalized bg and fg arrays."""
+    valid = ~np.isnan(bg_arr) & ~np.isnan(fg_arr)
+    combined = np.full(len(bg_arr), np.nan)
+    bg_v = np.clip(bg_arr[valid], 0, None)
+    fg_v = np.clip(fg_arr[valid], 0, None)
+    bg_min, bg_max = bg_v.min(), bg_v.max()
+    fg_min, fg_max = fg_v.min(), fg_v.max()
+    bg_norm = (bg_v - bg_min) / (bg_max - bg_min + 1e-8)
+    fg_norm = (fg_v - fg_min) / (fg_max - fg_min + 1e-8)
+    combined[valid] = np.sqrt(bg_norm * fg_norm)
+    return combined
+
+
 def get_seg_metrics_arrays(keys, metrics_dict):
-    """Returns arrays (bg_clip_sim, bg_ssim, fg_clip_score, combined) of length len(keys)."""
+    """Returns arrays (bg_clip_sim, bg_ssim, fg_clip_score, combined_ssim, combined_clip) of length len(keys)."""
     n = len(keys)
     bg_clip_sim = np.full(n, np.nan)
     bg_ssim = np.full(n, np.nan)
@@ -201,23 +226,11 @@ def get_seg_metrics_arrays(keys, metrics_dict):
             bg_clip_sim[i] = m.get("bg_clip_similarity", np.nan)
             bg_ssim[i] = m.get("bg_ssim", np.nan)
             fg_clip_score[i] = m.get("fg_clip_score", np.nan)
-    # Combined score: geometric mean of normalized bg_ssim and fg_clip_score
-    # Both are min-max normalized to [0, 1] so they contribute equally
-    valid = ~np.isnan(bg_ssim) & ~np.isnan(fg_clip_score)
-    combined = np.full(n, np.nan)
 
-    bg_v = np.clip(bg_ssim[valid], 0, None)
-    fg_v = np.clip(fg_clip_score[valid], 0, None)  # clamp negatives to 0
+    combined_ssim = _combined_score(bg_ssim, fg_clip_score)
+    combined_clip = _combined_score(bg_clip_sim, fg_clip_score)
 
-    # Min-max normalize each to [0, 1]
-    bg_min, bg_max = bg_v.min(), bg_v.max()
-    fg_min, fg_max = fg_v.min(), fg_v.max()
-    bg_norm = (bg_v - bg_min) / (bg_max - bg_min + 1e-8)
-    fg_norm = (fg_v - fg_min) / (fg_max - fg_min + 1e-8)
-
-    combined[valid] = np.sqrt(bg_norm * fg_norm)
-
-    return bg_clip_sim, bg_ssim, fg_clip_score, combined
+    return bg_clip_sim, bg_ssim, fg_clip_score, combined_ssim, combined_clip
 
 
 # -------------------- clustering helpers --------------------
@@ -456,7 +469,35 @@ def build_grid_metric_top(indices, keys, labels, images_root, out_path, thumb, c
 
 # -------------------- UMAP maps --------------------
 
-def map_clusters(coords, labels, cluster_indices, out_dir, max_labels=40):
+def _find_special_points(keys):
+    """Find indices of all-source (b=0) and all-target (b=2^N_BITS-1) paths."""
+    source_idx = target_idx = None
+    target_b = (1 << N_BITS) - 1
+    for i, k in enumerate(keys):
+        b = extract_b_value(k)
+        if b == 0:
+            source_idx = i
+        elif b == target_b:
+            target_idx = i
+    return source_idx, target_idx
+
+
+def _mark_special_points(ax, coords, keys):
+    """Mark source (b=0) and target (b=all-ones) on the plot with compact markers."""
+    source_idx, target_idx = _find_special_points(keys)
+    for idx, label, color, marker in [
+        (source_idx, "Source (all 0)", "blue", "*"),
+        (target_idx, "Target (all 1)", "red", "*"),
+    ]:
+        if idx is not None:
+            ax.scatter(coords[idx, 0], coords[idx, 1], s=300, c=color,
+                      marker=marker, edgecolors="white", linewidths=1, zorder=5,
+                      label=label)
+    if source_idx is not None or target_idx is not None:
+        ax.legend(loc="lower right", fontsize=9, framealpha=0.9)
+
+
+def map_clusters(coords, labels, cluster_indices, out_dir, keys=None, max_labels=40):
     """Cluster map. Only labels the top `max_labels` clusters by size to avoid overlap."""
     os.makedirs(out_dir, exist_ok=True)
     fig, ax = plt.subplots(figsize=(16, 16))
@@ -468,7 +509,7 @@ def map_clusters(coords, labels, cluster_indices, out_dir, max_labels=40):
         center = coords[idx].mean(axis=0)
         t = ax.annotate(str(lab), xy=(center[0], center[1]),
                         fontsize=8, weight="bold", ha="center", va="center",
-                        color="black",
+                        color="black", zorder=15,
                         bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="gray", alpha=0.85, lw=0.5))
         texts.append(t)
 
@@ -479,6 +520,10 @@ def map_clusters(coords, labels, cluster_indices, out_dir, max_labels=40):
     except ImportError:
         pass  # labels stay at centroids
 
+    # Mark source/target
+    if keys is not None:
+        _mark_special_points(ax, coords, keys)
+
     n_total = len(cluster_indices)
     ax.set_title(f"Clusters ({n_total} total)")
     ax.axis("off")
@@ -488,14 +533,15 @@ def map_clusters(coords, labels, cluster_indices, out_dir, max_labels=40):
     print("Saved:", path)
 
 
-def map_seg_metrics(coords, out_dir, bg_clip_sim, bg_ssim, fg_clip_score, combined):
+def map_seg_metrics(coords, out_dir, bg_clip_sim, bg_ssim, fg_clip_score, combined_ssim, combined_clip, keys=None):
     os.makedirs(out_dir, exist_ok=True)
-    fig, axes = plt.subplots(2, 2, figsize=(14, 14))
+    fig, axes = plt.subplots(2, 3, figsize=(21, 14))
     panels = [
         (axes[0, 0], bg_ssim, "bg_ssim (background preservation)", "cividis"),
-        (axes[0, 1], fg_clip_score, "fg_clip_score (prompt following)", "viridis"),
-        (axes[1, 0], bg_clip_sim, "bg_clip_similarity", "plasma"),
-        (axes[1, 1], combined, "combined: sqrt(norm_bg_ssim * norm_fg_clip)", "RdYlGn"),
+        (axes[0, 1], bg_clip_sim, "bg_clip_similarity", "plasma"),
+        (axes[0, 2], fg_clip_score, "fg_clip_score (prompt following)", "viridis"),
+        (axes[1, 0], combined_ssim, "combined_ssim: sqrt(norm_bg_ssim * norm_fg_clip)", "RdYlGn"),
+        (axes[1, 1], combined_clip, "combined_clip: sqrt(norm_bg_clip * norm_fg_clip)", "RdYlGn"),
     ]
     for ax, values, title, cmap in panels:
         valid = ~np.isnan(values)
@@ -507,7 +553,10 @@ def map_seg_metrics(coords, out_dir, bg_clip_sim, bg_ssim, fg_clip_score, combin
         else:
             ax.scatter(coords[:, 0], coords[:, 1], s=1, c="lightgray", alpha=0.6, rasterized=True)
             ax.set_title(f"{title} (no data)")
+        if keys is not None:
+            _mark_special_points(ax, coords, keys)
         ax.axis("off")
+    axes[1, 2].axis("off")
     plt.tight_layout()
     path = os.path.join(out_dir, "map_seg_metrics.png")
     plt.savefig(path, dpi=150, bbox_inches="tight")
@@ -527,6 +576,10 @@ def main():
     parser.add_argument("--labels", default=LABELS_PATH)
     parser.add_argument("--no-umap", action="store_true")
     parser.add_argument("--gpu", type=int, default=0, help="GPU ID for cuML UMAP")
+    parser.add_argument("--min_cluster_size", type=int, default=None,
+                        help="HDBSCAN min_cluster_size (default: auto from config)")
+    parser.add_argument("--min_samples", type=int, default=None,
+                        help="HDBSCAN min_samples (default: auto from config)")
     args = parser.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -554,10 +607,10 @@ def main():
         labels = np.load(args.labels)
         if len(labels) != len(keys):
             print(f"  Labels size mismatch ({len(labels)} vs {len(keys)}), recomputing...")
-            labels = _compute_labels(coords, args.gpu)
+            labels = _compute_labels(coords, args.gpu, args.min_cluster_size, args.min_samples)
             np.save(os.path.join(args.out, "labels.npy"), labels)
     else:
-        labels = _compute_labels(coords, args.gpu)
+        labels = _compute_labels(coords, args.gpu, args.min_cluster_size, args.min_samples)
         np.save(os.path.join(args.out, "labels.npy"), labels)
 
     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
@@ -570,21 +623,21 @@ def main():
 
     # Load seg metrics
     metrics_dict = {}
-    bg_clip_sim = bg_ssim = fg_clip_score = combined = None
+    bg_clip_sim = bg_ssim = fg_clip_score = combined_ssim = combined_clip = None
     if args.metrics and os.path.isfile(args.metrics):
         metrics_dict = load_seg_metrics_csv(args.metrics)
         print(f"Loaded seg metrics: {len(metrics_dict)} rows from {args.metrics}")
-        bg_clip_sim, bg_ssim, fg_clip_score, combined = get_seg_metrics_arrays(keys, metrics_dict)
+        bg_clip_sim, bg_ssim, fg_clip_score, combined_ssim, combined_clip = get_seg_metrics_arrays(keys, metrics_dict)
     else:
         print(f"Metrics file not found: {args.metrics}")
 
     # 1) Cluster map
     print("\n--- Building visualizations ---")
-    map_clusters(coords, labels, cluster_indices, args.out)
+    map_clusters(coords, labels, cluster_indices, args.out, keys=keys)
 
     # 2) Seg metrics on UMAP map
     if bg_clip_sim is not None:
-        map_seg_metrics(coords, args.out, bg_clip_sim, bg_ssim, fg_clip_score, combined)
+        map_seg_metrics(coords, args.out, bg_clip_sim, bg_ssim, fg_clip_score, combined_ssim, combined_clip, keys=keys)
 
     # 3) Grid: top 20 clusters × 5
     cluster_sizes_top = get_cluster_indices_by_size(labels, TOP_N_CLUSTERS)
@@ -606,7 +659,8 @@ def main():
             ("grid_top_bg_ssim.png", bg_ssim),
             ("grid_top_fg_clip_score.png", fg_clip_score),
             ("grid_top_bg_clip_sim.png", bg_clip_sim),
-            ("grid_top_combined.png", combined),  # best balance of bg preservation + prompt following
+            ("grid_top_combined_ssim.png", combined_ssim),
+            ("grid_top_combined_clip.png", combined_clip),
         ]
         for fname, values in metric_grids:
             top_idx = get_top_indices_by_metric(values, TOP_N_BY_METRIC)
