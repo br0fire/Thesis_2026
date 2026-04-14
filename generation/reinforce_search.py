@@ -429,17 +429,23 @@ class RewardComputer:
 
     @torch.no_grad()
     def compute_rewards(self, images, alpha=0.5):
-        """Compute reward for a batch of images.
+        """Compute reward for a batch of images using a weighted geometric mean.
+
+        The reward is `bg_term^alpha * fg_term^(1-alpha)` where both terms are
+        mapped into [0, 1]. Geometric mean ensures that neither background nor
+        foreground can be traded off fully — a near-zero term collapses the whole
+        reward. fg_clip_score (which is in ~[-0.3, 0.3]) is mapped to [0, 1] via
+        sigmoid so negative values correctly produce small (not zero) fg_term.
 
         Args:
             images: (B, 3, H, W) float32 in [0,1] on GPU.
-            alpha: weight for bg_ssim vs fg_clip_score.
+            alpha: exponent on bg_term, (1-alpha) on fg_term. 0.5 = unweighted sqrt.
         Returns:
-            (B,) reward tensor, bg_ssim array, fg_clip array.
+            (B,) reward tensor, bg_ssim, fg_clip_score (raw).
         """
         B = images.shape[0]
 
-        # bg_ssim
+        # bg_ssim (already in [0, 1])
         smap = ssim_map(images, self.source_dev.expand(B, -1, -1, -1), self.ssim_kernel, self.ssim_pad)
         bg_ssim = (smap * self.bg_mask).sum(dim=(1, 2, 3)) / max(self.bg_pixels, 1.0)  # (B,)
 
@@ -453,11 +459,13 @@ class RewardComputer:
 
         embs = F.normalize(self._image_embed(combined), p=2, dim=-1)
         fg_embs = embs[B:]
-        # fg alignment with the target-minus-source direction (unclamped — negative values
-        # correctly penalize misalignment).
+        # Raw fg_clip_score is in ~[-0.3, 0.3]
         fg_clip_score = (fg_embs * self.text_emb).sum(dim=-1)  # (B,)
 
-        rewards = alpha * bg_ssim + (1.0 - alpha) * fg_clip_score
+        # Map both to [0, 1] and take weighted geometric mean
+        bg_term = bg_ssim.clamp(min=1e-6)
+        fg_term = torch.sigmoid(fg_clip_score * 10.0).clamp(min=1e-6)  # sharp sigmoid, neutral at 0
+        rewards = bg_term.pow(alpha) * fg_term.pow(1.0 - alpha)
         return rewards, bg_ssim, fg_clip_score
 
 
@@ -594,7 +602,11 @@ def train_reinforce(args):
     best_mask = None
     best_image = None
     total_images = 0
-    episodes_since_improvement = 0  # for plateau early stop
+    # Mean-reward plateau detection: track moving average over last `ma_window` episodes
+    # and stop when it hasn't improved by `ma_tolerance` for `plateau_patience` episodes.
+    mean_reward_history = []
+    best_ma = -float("inf")
+    episodes_since_ma_improve = 0
 
     # CSV log
     log_path = os.path.join(args.output_dir, "reinforce_log.csv")
@@ -636,16 +648,22 @@ def train_reinforce(args):
         loss.backward()
         optimizer.step()
 
-        # Track best. The plateau counter only starts accumulating after min_episodes
-        # so the floor is a real exploration buffer, not just a delayed check.
+        # Track best-ever mask (kept for final output, not used for stopping).
         batch_best_idx = rewards.argmax().item()
         if rewards[batch_best_idx] > best_reward:
             best_reward = rewards[batch_best_idx].item()
             best_mask = masks[batch_best_idx].detach().clone()
             best_image = images[batch_best_idx].detach().clone()
-            episodes_since_improvement = 0
-        elif ep >= args.min_episodes:
-            episodes_since_improvement += 1
+
+        # Mean-reward moving-average plateau detection
+        mean_reward_history.append(mean_reward)
+        if len(mean_reward_history) >= args.ma_window:
+            current_ma = float(np.mean(mean_reward_history[-args.ma_window:]))
+            if current_ma > best_ma + args.ma_tolerance:
+                best_ma = current_ma
+                episodes_since_ma_improve = 0
+            elif ep >= args.min_episodes:
+                episodes_since_ma_improve += 1
 
         # Log
         probs = policy.get_probs().cpu().numpy()
@@ -667,15 +685,15 @@ def train_reinforce(args):
             print(f"         probs=[{probs_str}]", flush=True)
 
         # Early stopping conditions (disabled when patience/threshold are 0).
-        # Both conditions respect --min_episodes so the policy has time to explore before
-        # declaring convergence.
+        # Gated by --min_episodes so the policy has time to explore before declaring convergence.
         if ep >= args.min_episodes:
             if args.entropy_stop > 0 and entropy.item() < args.entropy_stop:
                 print(f"  Early stop at episode {ep}: entropy={entropy.item():.3f} < {args.entropy_stop}", flush=True)
                 break
-            if args.plateau_patience > 0 and episodes_since_improvement >= args.plateau_patience:
-                print(f"  Early stop at episode {ep}: no improvement in {episodes_since_improvement} episodes "
-                      f"(best_reward={best_reward:.4f})", flush=True)
+            if args.plateau_patience > 0 and episodes_since_ma_improve >= args.plateau_patience:
+                print(f"  Early stop at episode {ep}: mean_reward MA(window={args.ma_window}) has not improved "
+                      f"by {args.ma_tolerance} for {episodes_since_ma_improve} episodes "
+                      f"(best_ma={best_ma:.4f})", flush=True)
                 break
 
     log_file.close()
@@ -754,25 +772,29 @@ if __name__ == "__main__":
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--batch_size", type=int, default=8)
     # RL
-    p.add_argument("--num_episodes", type=int, default=400,
-                   help="Hard cap. With min_episodes=200 + plateau_patience=150, the worst-case "
-                        "convergence window is 350 episodes, so 400 gives a small safety buffer.")
+    p.add_argument("--num_episodes", type=int, default=300,
+                   help="Hard cap on episodes. Primary stop is mean_reward MA plateau.")
     p.add_argument("--lr", type=float, default=0.1)
-    p.add_argument("--alpha", type=float, default=0.3, help="Reward weight: alpha*bg_ssim + (1-alpha)*fg_clip")
+    p.add_argument("--alpha", type=float, default=0.5,
+                   help="Weight for bg_term in geometric mean reward: bg^alpha * fg^(1-alpha). "
+                        "0.5 = unweighted sqrt (balanced).")
     p.add_argument("--baseline_ema", type=float, default=0.9)
     p.add_argument("--entropy_coeff", type=float, default=0.05)
     p.add_argument("--normalize_advantages", action="store_true", default=True,
                    help="Standardize advantages per batch (default on; use --no-normalize_advantages to disable)")
     p.add_argument("--no-normalize_advantages", dest="normalize_advantages", action="store_false")
     # Early-stop criteria
-    p.add_argument("--min_episodes", type=int, default=200,
+    p.add_argument("--min_episodes", type=int, default=100,
                    help="Minimum episodes before any early-stop condition is checked.")
     p.add_argument("--entropy_stop", type=float, default=0.5,
                    help="Stop when policy entropy drops below this value. Set 0 to disable.")
-    p.add_argument("--plateau_patience", type=int, default=150,
-                   help="Stop if best_reward has not improved for this many episodes. "
-                        "Raised from 100 after SigLIP2 runs early-stopped at ep 113 with the stricter value. "
-                        "Set 0 to disable.")
+    p.add_argument("--plateau_patience", type=int, default=80,
+                   help="Stop if mean_reward moving average has not improved for this many "
+                        "episodes (after min_episodes). Set 0 to disable.")
+    p.add_argument("--ma_window", type=int, default=30,
+                   help="Window size for mean_reward moving average used by plateau detection.")
+    p.add_argument("--ma_tolerance", type=float, default=0.002,
+                   help="Minimum improvement in MA to count as non-plateau.")
     p.add_argument("--top_k", type=int, default=10)
     p.add_argument("--log_interval", type=int, default=10)
     # Segmentation
