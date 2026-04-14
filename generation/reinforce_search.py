@@ -636,14 +636,15 @@ def train_reinforce(args):
         loss.backward()
         optimizer.step()
 
-        # Track best
+        # Track best. The plateau counter only starts accumulating after min_episodes
+        # so the floor is a real exploration buffer, not just a delayed check.
         batch_best_idx = rewards.argmax().item()
         if rewards[batch_best_idx] > best_reward:
             best_reward = rewards[batch_best_idx].item()
             best_mask = masks[batch_best_idx].detach().clone()
             best_image = images[batch_best_idx].detach().clone()
             episodes_since_improvement = 0
-        else:
+        elif ep >= args.min_episodes:
             episodes_since_improvement += 1
 
         # Log
@@ -753,8 +754,9 @@ if __name__ == "__main__":
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--batch_size", type=int, default=8)
     # RL
-    p.add_argument("--num_episodes", type=int, default=300,
-                   help="Hard cap. Empirically runs early-stop around ep 200-300 so 300 is a safe ceiling.")
+    p.add_argument("--num_episodes", type=int, default=400,
+                   help="Hard cap. With min_episodes=200 + plateau_patience=150, the worst-case "
+                        "convergence window is 350 episodes, so 400 gives a small safety buffer.")
     p.add_argument("--lr", type=float, default=0.1)
     p.add_argument("--alpha", type=float, default=0.3, help="Reward weight: alpha*bg_ssim + (1-alpha)*fg_clip")
     p.add_argument("--baseline_ema", type=float, default=0.9)
