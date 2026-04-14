@@ -22,20 +22,7 @@ LOGS_DIR = "/home/jovyan/shares/SR006.nfs2/svgrozny/project/clear_project/logs"
 OUT_DIR = "/home/jovyan/shares/SR006.nfs2/svgrozny/project/clear_project/analysis/reinforce_analysis"
 
 EXPERIMENTS = [
-    # v1: CLIP ViT-B/32 + delta reward (legacy)
-    "test_catdog", "car_taxi", "sunflower_lavender", "chair_throne",
-    "penguin_flamingo", "cake_books", "lighthouse_castle", "violin_guitar",
-    "horse", "room", "snow_volcano", "butterfly_hummingbird", "sail_pirate",
-    # v2clip: CLIP ViT-B/32 + relative reward (first-round rerun)
-    "catdog_v2clip", "car_taxi_v2clip", "sunflower_lavender_v2clip", "chair_throne_v2clip",
-    "violin_guitar_v2clip",  # control for v2 vision-model comparison
-    # v2: SigLIP2 SO400M + relative reward (new default)
-    "catdog_v2", "car_taxi_v2", "sunflower_lavender_v2", "chair_throne_v2",
-    "penguin_flamingo_v2", "cake_books_v2", "lighthouse_castle_v2", "violin_guitar_v2",
-    "horse_v2", "room_v2", "snow_volcano_v2", "butterfly_hummingbird_v2", "sail_pirate_v2",
-    # Background-rich stress-test experiments (object-dense backgrounds)
-    "bgrich_teapot_globe", "bgrich_candle_crystal", "bgrich_typewriter_laptop",
-    # v3: SigLIP2 + simplified delta reward (current canonical config) — full 16-experiment sweep
+    # Canonical config: SigLIP 2 SO400M + simplified delta reward
     "catdog_v3", "car_taxi_v3", "sunflower_lavender_v3", "chair_throne_v3",
     "penguin_flamingo_v3", "cake_books_v3", "lighthouse_castle_v3", "violin_guitar_v3",
     "horse_v3", "room_v3", "snow_volcano_v3", "butterfly_hummingbird_v3", "sail_pirate_v3",
