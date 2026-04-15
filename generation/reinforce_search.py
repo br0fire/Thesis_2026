@@ -505,7 +505,27 @@ def compute_segmentation(source_image_tensor, seg_prompt, device, dilate_px=10, 
     ).squeeze()
 
     prob = torch.sigmoid(upsampled).cpu().numpy()
+    print(f"  CLIPSeg prob range: min={prob.min():.3f} max={prob.max():.3f} mean={prob.mean():.3f}")
+
+    # Try the target threshold first. If it yields zero foreground (common for
+    # dark/atmospheric images), fall back to progressively lower thresholds.
     foreground = (prob > threshold).astype(np.uint8)
+    used_threshold = threshold
+    if foreground.sum() == 0:
+        for fallback in (0.3, 0.15, 0.05):
+            if fallback >= threshold:
+                continue
+            foreground = (prob > fallback).astype(np.uint8)
+            if foreground.sum() > 0:
+                used_threshold = fallback
+                print(f"  CLIPSeg threshold auto-lowered: {threshold:.2f} → {fallback:.2f}")
+                break
+    # Last-resort fallback: use the top-quantile pixels (best-effort)
+    if foreground.sum() == 0:
+        q = np.quantile(prob, 0.90)
+        foreground = (prob >= q).astype(np.uint8)
+        used_threshold = float(q)
+        print(f"  CLIPSeg: all thresholds failed, using top-10% quantile={q:.3f}")
 
     if dilate_px > 0:
         from scipy.ndimage import binary_dilation
@@ -516,7 +536,8 @@ def compute_segmentation(source_image_tensor, seg_prompt, device, dilate_px=10, 
     torch.cuda.empty_cache()
 
     bg_mask = 1 - foreground
-    print(f"  Segmentation: foreground={100 * (1 - bg_mask.mean()):.1f}%, bg={100 * bg_mask.mean():.1f}%")
+    print(f"  Segmentation: foreground={100 * (1 - bg_mask.mean()):.1f}%, "
+          f"bg={100 * bg_mask.mean():.1f}% (threshold={used_threshold:.2f})")
     return bg_mask
 
 
