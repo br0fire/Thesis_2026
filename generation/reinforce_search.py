@@ -581,9 +581,24 @@ def train_reinforce(args):
         bg_mask = compute_segmentation(source_img, seg_prompt, device)
 
     # Save source image for reference
-    src_pil = Image.fromarray(
-        (source_img[0].permute(1, 2, 0).cpu().numpy() * 255).clip(0, 255).astype(np.uint8))
+    src_np = (source_img[0].permute(1, 2, 0).cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+    src_pil = Image.fromarray(src_np)
     src_pil.save(os.path.join(args.output_dir, "source_b0.jpg"), quality=95)
+
+    # Save a visualization of the segmentation mask overlaid on the source
+    # (side-by-side: left = source, right = source with foreground tinted red)
+    H_src, W_src = src_np.shape[:2]
+    mask_resized = np.array(Image.fromarray((bg_mask * 255).astype(np.uint8)).resize(
+        (W_src, H_src), Image.NEAREST))
+    bg_full = (mask_resized > 127)  # True where background
+    fg_full = ~bg_full                # True where foreground
+    overlay = src_np.copy()
+    overlay[fg_full, 0] = np.clip(overlay[fg_full, 0].astype(int) + 100, 0, 255)  # red channel
+    overlay[fg_full, 1] = (overlay[fg_full, 1] * 0.5).astype(np.uint8)
+    overlay[fg_full, 2] = (overlay[fg_full, 2] * 0.5).astype(np.uint8)
+    side_by_side = np.concatenate([src_np, overlay], axis=1)  # (H, 2*W, 3)
+    Image.fromarray(side_by_side).save(
+        os.path.join(args.output_dir, "bg_mask_vis.jpg"), quality=92)
 
     # Also generate and save target image (all-ones mask) as a reference
     ones_mask = torch.ones(1, n_bits, device=device)
