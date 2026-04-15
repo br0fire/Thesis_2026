@@ -146,7 +146,8 @@ def train_one_config(generator, reward_computer, config, episodes, batch_size, n
 
 
 def random_baseline(generator, reward_computer, n_samples, batch_size, n_bits, alpha, device):
-    """Sample N random masks, evaluate all, return running-max mean_reward by batch."""
+    """Sample N random masks, track the running maximum of individual rewards.
+    Returns the running-max curve so it can be compared directly to REINFORCE best-so-far."""
     print(f"\n--- Random baseline ({n_samples} samples) ---", flush=True)
     all_rewards = []
     t0 = time.perf_counter()
@@ -164,26 +165,12 @@ def random_baseline(generator, reward_computer, n_samples, batch_size, n_bits, a
             print(f"  [batch {bi:3d}/{n_batches}] ({elapsed:.0f}s)", flush=True)
 
     all_rewards = np.concatenate(all_rewards)  # (n_samples,)
-    print(f"  done: min={all_rewards.min():.4f}, max={all_rewards.max():.4f}, "
-          f"mean={all_rewards.mean():.4f}, time={time.perf_counter()-t0:.0f}s", flush=True)
-
-    # Compute running max and per-batch mean so they can be plotted vs episode
     running_max = np.maximum.accumulate(all_rewards)
-    # Per-batch mean (groups of batch_size)
-    batch_means = []
-    for bi in range(n_batches):
-        chunk = all_rewards[bi * batch_size: (bi + 1) * batch_size]
-        batch_means.append(chunk.mean())
-    batch_means = np.array(batch_means)
-    # Running max per-batch
-    running_max_per_batch = np.maximum.accumulate(batch_means)
-
+    print(f"  done: best={running_max[-1]:.4f}, time={time.perf_counter()-t0:.0f}s", flush=True)
     return {
-        "all_rewards": all_rewards,
-        "running_max": running_max,               # (n_samples,)
-        "batch_means": batch_means,               # (n_batches,)
-        "running_max_per_batch": running_max_per_batch,
-        "best": all_rewards.max(),
+        "rewards": all_rewards,
+        "running_max": running_max,  # (n_samples,)
+        "best": float(all_rewards.max()),
     }
 
 
@@ -204,7 +191,7 @@ def all_ones_baseline(generator, reward_computer, n_bits, alpha, device):
     }
 
 
-def plot_sweep(results, random_res, ones_res, out_path, title):
+def plot_sweep(results, random_res, ones_res, out_path, title, batch_size):
     """Build the comparison plot: mean_reward per episode + baselines."""
     fig, axes = plt.subplots(2, 2, figsize=(15, 10))
     colors = plt.cm.tab10(np.linspace(0, 1, len(results)))
@@ -213,11 +200,6 @@ def plot_sweep(results, random_res, ones_res, out_path, title):
     ax = axes[0, 0]
     for r, c in zip(results, colors):
         ax.plot(r["mean_rewards"], label=r["name"], color=c, linewidth=1.5, alpha=0.85)
-    # Random baseline: per-batch mean (noisy, but shows untrained reward level)
-    if random_res is not None:
-        ax.plot(random_res["batch_means"], label=f"random (per-batch)",
-                color="gray", linewidth=1, alpha=0.5, linestyle=":")
-    # All-ones: horizontal reference
     if ones_res is not None:
         ax.axhline(ones_res["reward"], label=f"all-ones ({ones_res['reward']:.3f})",
                    color="black", linewidth=1.5, linestyle="--")
@@ -227,19 +209,21 @@ def plot_sweep(results, random_res, ones_res, out_path, title):
     ax.grid(alpha=0.3)
     ax.legend(fontsize=8, loc="lower right")
 
-    # ── Panel 2: best_reward_ever ──
+    # ── Panel 2: best_reward_ever vs images sampled ──
+    # All curves on the same x-axis: episode number (= total images / batch_size).
     ax = axes[0, 1]
     for r, c in zip(results, colors):
         ax.plot(r["best_rewards_ever"], label=r["name"], color=c, linewidth=1.5)
-    # Random: running max per batch (direct comparison to best-so-far)
+    # Random: running max over individual samples, x = sample_idx / batch_size
     if random_res is not None:
-        n = len(random_res["running_max_per_batch"])
-        ax.plot(range(n), random_res["running_max_per_batch"],
-                label=f"random running-max", color="gray", linewidth=1.5, linestyle="--")
+        n = len(random_res["running_max"])
+        x_random = np.arange(n) / batch_size
+        ax.plot(x_random, random_res["running_max"],
+                label=f"random N={n} (best seen)", color="gray", linewidth=2, linestyle="--")
     if ones_res is not None:
         ax.axhline(ones_res["reward"], label=f"all-ones ({ones_res['reward']:.3f})",
                    color="black", linewidth=1.5, linestyle="--")
-    ax.set_xlabel("Episode / Batch index")
+    ax.set_xlabel("Episode (= total images / batch_size)")
     ax.set_ylabel("best_reward_ever")
     ax.set_title("Best-so-far reward")
     ax.grid(alpha=0.3)
@@ -395,7 +379,7 @@ def main():
         **{f"{r['name']}_best_rewards": r["best_rewards_ever"] for r in results},
         **{f"{r['name']}_fg_clips": r["fg_clips"] for r in results},
         **{f"{r['name']}_entropies": r["entropies"] for r in results},
-        random_rewards=random_res["all_rewards"],
+        random_rewards=random_res["rewards"],
         random_running_max=random_res["running_max"],
         ones_reward=np.array([ones_res["reward"]]),
     )
@@ -404,7 +388,7 @@ def main():
         "configs": [r["config"] | {"best_reward": r["best_reward"]} for r in results],
         "all_ones": ones_res["reward"],
         "random_best": float(random_res["best"]),
-        "random_mean": float(random_res["all_rewards"].mean()),
+        "random_mean": float(random_res["rewards"].mean()),
     }
     with open(os.path.join(args.output_dir, "summary.json"), "w") as f:
         json.dump(summary, f, indent=2)
@@ -414,7 +398,8 @@ def main():
     short_tgt = args.target_prompt[:40] + "..." if len(args.target_prompt) > 40 else args.target_prompt
     title = f"{short_src} → {short_tgt}"
     plot_sweep(results, random_res, ones_res,
-               os.path.join(args.output_dir, "sweep_curves.png"), title)
+               os.path.join(args.output_dir, "sweep_curves.png"), title,
+               batch_size=args.batch_size)
 
     print(f"\nAll done. Results in {args.output_dir}", flush=True)
 
