@@ -678,16 +678,19 @@ def train_reinforce(args):
             if args.entropy_stop > 0 and entropy.item() < args.entropy_stop:
                 print(f"  Early stop at episode {ep}: entropy={entropy.item():.3f} < {args.entropy_stop}", flush=True)
                 break
-            # Plateau: linear slope of the last W mean_rewards is near zero.
-            # "Near zero" = |slope| < 0.001 per episode, i.e. less than ~0.03 change over W=30.
+            # Plateau: linear regression on the last W mean_rewards. We stop if the
+            # slope is NOT statistically significantly positive. Formally, H0: slope=0.
+            # If p-value > --plateau_pvalue, we can't reject H0 → plateau → stop.
+            # Also stop if slope is non-positive (reward is decreasing or flat).
             W = args.plateau_window
             if W > 0 and len(mean_reward_history) >= W:
+                from scipy.stats import linregress
                 y = np.asarray(mean_reward_history[-W:], dtype=np.float64)
                 x = np.arange(W, dtype=np.float64)
-                slope = float(np.polyfit(x, y, 1)[0])
-                if abs(slope) < 0.001:
-                    print(f"  Early stop at episode {ep}: plateau — slope of last {W} eps = "
-                          f"{slope:+.5f}/ep (|slope| < 0.001)", flush=True)
+                res = linregress(x, y)
+                if res.slope <= 0 or res.pvalue >= args.plateau_pvalue:
+                    print(f"  Early stop at episode {ep}: plateau — slope={res.slope:+.5f}/ep, "
+                          f"p={res.pvalue:.3f} >= {args.plateau_pvalue}", flush=True)
                     break
 
     log_file.close()
@@ -782,9 +785,13 @@ if __name__ == "__main__":
                    help="Minimum episodes before any early-stop condition is checked.")
     p.add_argument("--entropy_stop", type=float, default=0.5,
                    help="Stop when policy entropy drops below this value. Set 0 to disable.")
-    p.add_argument("--plateau_window", type=int, default=30,
-                   help="Stop when the slope of mean_reward over the last W episodes is near "
-                        "zero (|slope| < 0.001/ep). Set 0 to disable.")
+    p.add_argument("--plateau_window", type=int, default=40,
+                   help="Window for plateau detection. Fits a linear regression to the last W "
+                        "episodes' mean_reward; stops if the slope is not statistically "
+                        "significantly positive. Set 0 to disable.")
+    p.add_argument("--plateau_pvalue", type=float, default=0.05,
+                   help="p-value threshold for linear regression slope test. Higher = stricter "
+                        "(requires stronger evidence of ongoing improvement to keep training).")
     p.add_argument("--top_k", type=int, default=10)
     p.add_argument("--log_interval", type=int, default=10)
     # Segmentation
