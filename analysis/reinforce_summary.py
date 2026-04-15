@@ -17,9 +17,26 @@ import torch
 import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw, ImageFont
 
-NFS3 = "/home/jovyan/shares/SR006.nfs3/svgrozny"
 LOGS_DIR = "/home/jovyan/shares/SR006.nfs2/svgrozny/project/clear_project/logs"
 OUT_DIR = "/home/jovyan/shares/SR006.nfs2/svgrozny/project/clear_project/analysis/reinforce_analysis"
+# Legacy location (still used by in-flight runs that started before the move)
+LEGACY_NFS3 = "/home/jovyan/shares/SR006.nfs3/svgrozny"
+
+
+def _resolve_experiment_dir(name):
+    """Find an experiment's data directory. Prefers the canonical NFS2 location
+    (analysis/reinforce_analysis/<version>/experiments/reinforce_<name>/) and
+    falls back to the legacy NFS3 path for in-flight runs."""
+    import re
+    m = re.search(r"_v\d+[a-z]*$", name)
+    version = m.group(0)[1:] if m else "misc"
+    primary = os.path.join(OUT_DIR, version, "experiments", f"reinforce_{name}")
+    if os.path.isdir(primary):
+        return primary
+    legacy = os.path.join(LEGACY_NFS3, f"reinforce_{name}")
+    if os.path.isdir(legacy):
+        return legacy
+    return primary  # doesn't exist anywhere — caller will handle missing files
 
 EXPERIMENTS = [
     # v3: arithmetic-mean reward (8 remaining, not rerun)
@@ -50,7 +67,7 @@ def _version_of(name):
 
 def load_experiment(name):
     """Load experiment data if it exists. Returns dict or None."""
-    exp_dir = os.path.join(NFS3, f"reinforce_{name}")
+    exp_dir = _resolve_experiment_dir(name)
     csv_path = os.path.join(exp_dir, "reinforce_log.csv")
     ckpt_path = os.path.join(exp_dir, "reinforce_result.pt")
 

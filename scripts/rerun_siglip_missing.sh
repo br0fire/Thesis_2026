@@ -12,6 +12,7 @@ export HF_HOME=/home/jovyan/shares/SR006.nfs3/svgrozny/hf_cache
 export PYTHONUNBUFFERED=1
 
 NFS3=/home/jovyan/shares/SR006.nfs3/svgrozny
+RESULTS_BASE=/home/jovyan/shares/SR006.nfs2/svgrozny/project/clear_project/analysis/reinforce_analysis
 MASKS=metrics/masks
 
 # All hyperparameters (num_episodes=300, min_episodes=200, plateau_patience=150,
@@ -25,7 +26,7 @@ run_siglip2() {
     local TGT="$5"
     local SEG="$6"
     local MASK="$7"
-    local OUTDIR="${NFS3}/reinforce_${NAME}${SUFFIX}"
+    local OUTDIR="${RESULTS_BASE}/${SUFFIX#_}/experiments/reinforce_${NAME}${SUFFIX}"
     local LOGFILE="logs/reinforce_${NAME}${SUFFIX}.log"
 
     local MASK_ARG=""

@@ -12,7 +12,19 @@ import numpy as np
 import pandas as pd
 import torch
 
-NFS3 = "/home/jovyan/shares/SR006.nfs3/svgrozny"
+OUT_DIR = "/home/jovyan/shares/SR006.nfs2/svgrozny/project/clear_project/analysis/reinforce_analysis"
+LEGACY_NFS3 = "/home/jovyan/shares/SR006.nfs3/svgrozny"
+
+
+def _resolve_experiment_dir(name):
+    import re, os
+    m = re.search(r"_v\d+[a-z]*$", name)
+    version = m.group(0)[1:] if m else "misc"
+    primary = os.path.join(OUT_DIR, version, "experiments", f"reinforce_{name}")
+    if os.path.isdir(primary):
+        return primary
+    legacy = os.path.join(LEGACY_NFS3, f"reinforce_{name}")
+    return legacy if os.path.isdir(legacy) else primary
 
 EXPERIMENTS = [
     "cake_books_v3", "lighthouse_castle_v3",
@@ -33,7 +45,7 @@ EXPERIMENTS = [
 def load_all():
     out = {}
     for name in EXPERIMENTS:
-        exp_dir = os.path.join(NFS3, f"reinforce_{name}")
+        exp_dir = _resolve_experiment_dir(name)
         csv_path = os.path.join(exp_dir, "reinforce_log.csv")
         ckpt_path = os.path.join(exp_dir, "reinforce_result.pt")
         if not os.path.isfile(csv_path) or os.path.getsize(csv_path) == 0:

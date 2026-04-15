@@ -11,6 +11,7 @@ export HF_HOME=/home/jovyan/shares/SR006.nfs3/svgrozny/hf_cache
 export PYTHONUNBUFFERED=1
 
 NFS3=/home/jovyan/shares/SR006.nfs3/svgrozny
+RESULTS_BASE=/home/jovyan/shares/SR006.nfs2/svgrozny/project/clear_project/analysis/reinforce_analysis
 MASKS=metrics/masks
 
 launch() {
@@ -20,7 +21,7 @@ launch() {
     local TGT="$4"
     local SEG="$5"
     local MASK="$6"
-    local OUTDIR="${NFS3}/reinforce_${NAME}_v4"
+    local OUTDIR="${RESULTS_BASE}/v4/experiments/reinforce_${NAME}_v4"
     local LOGFILE="logs/reinforce_${NAME}_v4.log"
     local MASK_ARG=""
     [ -n "$MASK" ] && [ -f "$MASK" ] && MASK_ARG="--mask $MASK"
