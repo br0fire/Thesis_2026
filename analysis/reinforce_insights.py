@@ -15,14 +15,15 @@ import torch
 NFS3 = "/home/jovyan/shares/SR006.nfs3/svgrozny"
 
 EXPERIMENTS = [
-    # v3: arithmetic-mean reward (8 remaining, not rerun)
     "cake_books_v3", "lighthouse_castle_v3",
     "horse_v3", "room_v3", "snow_volcano_v3", "butterfly_hummingbird_v3", "sail_pirate_v3",
     "bgrich_candle_crystal_v3",
-    # v4: geometric-mean reward + mean_reward plateau stop
     "catdog_v4", "car_taxi_v4", "sunflower_lavender_v4", "chair_throne_v4",
     "penguin_flamingo_v4", "violin_guitar_v4",
     "bgrich_teapot_globe_v4", "bgrich_typewriter_laptop_v4",
+    "catdog_v5", "car_taxi_v5", "sunflower_lavender_v5", "chair_throne_v5",
+    "penguin_flamingo_v5", "violin_guitar_v5",
+    "bgrich_teapot_globe_v5", "bgrich_typewriter_laptop_v5",
 ]
 
 

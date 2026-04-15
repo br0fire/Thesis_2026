@@ -602,11 +602,8 @@ def train_reinforce(args):
     best_mask = None
     best_image = None
     total_images = 0
-    # Mean-reward plateau detection: track moving average over last `ma_window` episodes
-    # and stop when it hasn't improved by `ma_tolerance` for `plateau_patience` episodes.
+    # Mean-reward history for plateau detection
     mean_reward_history = []
-    best_ma = -float("inf")
-    episodes_since_ma_improve = 0
 
     # CSV log
     log_path = os.path.join(args.output_dir, "reinforce_log.csv")
@@ -655,15 +652,7 @@ def train_reinforce(args):
             best_mask = masks[batch_best_idx].detach().clone()
             best_image = images[batch_best_idx].detach().clone()
 
-        # Mean-reward moving-average plateau detection
         mean_reward_history.append(mean_reward)
-        if len(mean_reward_history) >= args.ma_window:
-            current_ma = float(np.mean(mean_reward_history[-args.ma_window:]))
-            if current_ma > best_ma + args.ma_tolerance:
-                best_ma = current_ma
-                episodes_since_ma_improve = 0
-            elif ep >= args.min_episodes:
-                episodes_since_ma_improve += 1
 
         # Log
         probs = policy.get_probs().cpu().numpy()
@@ -684,17 +673,22 @@ def train_reinforce(args):
                   f"({total_images} imgs, {elapsed:.0f}s)", flush=True)
             print(f"         probs=[{probs_str}]", flush=True)
 
-        # Early stopping conditions (disabled when patience/threshold are 0).
-        # Gated by --min_episodes so the policy has time to explore before declaring convergence.
+        # Early stopping (gated by --min_episodes).
         if ep >= args.min_episodes:
             if args.entropy_stop > 0 and entropy.item() < args.entropy_stop:
                 print(f"  Early stop at episode {ep}: entropy={entropy.item():.3f} < {args.entropy_stop}", flush=True)
                 break
-            if args.plateau_patience > 0 and episodes_since_ma_improve >= args.plateau_patience:
-                print(f"  Early stop at episode {ep}: mean_reward MA(window={args.ma_window}) has not improved "
-                      f"by {args.ma_tolerance} for {episodes_since_ma_improve} episodes "
-                      f"(best_ma={best_ma:.4f})", flush=True)
-                break
+            # Plateau: linear slope of the last W mean_rewards is near zero.
+            # "Near zero" = |slope| < 0.001 per episode, i.e. less than ~0.03 change over W=30.
+            W = args.plateau_window
+            if W > 0 and len(mean_reward_history) >= W:
+                y = np.asarray(mean_reward_history[-W:], dtype=np.float64)
+                x = np.arange(W, dtype=np.float64)
+                slope = float(np.polyfit(x, y, 1)[0])
+                if abs(slope) < 0.001:
+                    print(f"  Early stop at episode {ep}: plateau — slope of last {W} eps = "
+                          f"{slope:+.5f}/ep (|slope| < 0.001)", flush=True)
+                    break
 
     log_file.close()
     elapsed = time.perf_counter() - t_start
@@ -784,17 +778,13 @@ if __name__ == "__main__":
                    help="Standardize advantages per batch (default on; use --no-normalize_advantages to disable)")
     p.add_argument("--no-normalize_advantages", dest="normalize_advantages", action="store_false")
     # Early-stop criteria
-    p.add_argument("--min_episodes", type=int, default=100,
+    p.add_argument("--min_episodes", type=int, default=50,
                    help="Minimum episodes before any early-stop condition is checked.")
     p.add_argument("--entropy_stop", type=float, default=0.5,
                    help="Stop when policy entropy drops below this value. Set 0 to disable.")
-    p.add_argument("--plateau_patience", type=int, default=80,
-                   help="Stop if mean_reward moving average has not improved for this many "
-                        "episodes (after min_episodes). Set 0 to disable.")
-    p.add_argument("--ma_window", type=int, default=30,
-                   help="Window size for mean_reward moving average used by plateau detection.")
-    p.add_argument("--ma_tolerance", type=float, default=0.002,
-                   help="Minimum improvement in MA to count as non-plateau.")
+    p.add_argument("--plateau_window", type=int, default=30,
+                   help="Stop when the slope of mean_reward over the last W episodes is near "
+                        "zero (|slope| < 0.001/ep). Set 0 to disable.")
     p.add_argument("--top_k", type=int, default=10)
     p.add_argument("--log_interval", type=int, default=10)
     # Segmentation

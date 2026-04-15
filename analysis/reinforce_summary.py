@@ -26,11 +26,23 @@ EXPERIMENTS = [
     "cake_books_v3", "lighthouse_castle_v3",
     "horse_v3", "room_v3", "snow_volcano_v3", "butterfly_hummingbird_v3", "sail_pirate_v3",
     "bgrich_candle_crystal_v3",
-    # v4: geometric-mean reward + mean_reward plateau stop
+    # v4: geometric-mean reward + mean_reward MA plateau stop
     "catdog_v4", "car_taxi_v4", "sunflower_lavender_v4", "chair_throne_v4",
     "penguin_flamingo_v4", "violin_guitar_v4",
     "bgrich_teapot_globe_v4", "bgrich_typewriter_laptop_v4",
+    # v5: geometric-mean reward + slope-based plateau stop
+    "catdog_v5", "car_taxi_v5", "sunflower_lavender_v5", "chair_throne_v5",
+    "penguin_flamingo_v5", "violin_guitar_v5",
+    "bgrich_teapot_globe_v5", "bgrich_typewriter_laptop_v5",
 ]
+
+
+def _version_of(name):
+    """Extract version suffix like 'v3', 'v4', 'v5' from an experiment name.
+    Experiments without a _vN suffix go into 'misc'."""
+    import re
+    m = re.search(r"_v\d+[a-z]*$", name)
+    return m.group(0)[1:] if m else "misc"
 
 
 def load_experiment(name):
@@ -388,47 +400,48 @@ def build_top_images_grid(exp, out_path, top_k=10):
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
-    grids_dir = os.path.join(OUT_DIR, "top_images_grids")
-    os.makedirs(grids_dir, exist_ok=True)
 
     print("Loading experiments...")
     experiments = [load_experiment(n) for n in EXPERIMENTS]
     done = [e for e in experiments if e is not None]
     print(f"  {len(done)} / {len(EXPERIMENTS)} experiments have results\n")
 
-    # 1. Summary CSV
-    print("Building summary table...")
-    summary = build_summary(done)
-    csv_path = os.path.join(OUT_DIR, "summary.csv")
-    summary.to_csv(csv_path, index=False)
-    print(f"Saved: {csv_path}")
-    print()
-
-    # Print compact summary to stdout
-    print("=" * 80)
-    print("SUMMARY")
-    print("=" * 80)
-    cols_to_show = ["name", "best_reward", "total_images", "final_bg_ssim",
-                    "final_fg_clip", "final_entropy", "best_mask"]
-    avail = [c for c in cols_to_show if c in summary.columns]
-    print(summary[avail].to_string(index=False))
-    print()
-
-    # 2. Training curves
-    print("Plotting training curves...")
-    plot_training_curves(done, os.path.join(OUT_DIR, "training_curves.png"))
-
-    # 3. Learned probs heatmap
-    print("Plotting learned probabilities...")
-    plot_learned_probs(done, os.path.join(OUT_DIR, "learned_probs.png"))
-
-    # 4. Top-K image grids per experiment
-    print("Building top-image grids...")
+    # Group by version suffix (v3, v4, v5, ...)
+    by_version = {}
     for exp in done:
-        out_path = os.path.join(grids_dir, f"{exp['name']}_top_grid.jpg")
-        build_top_images_grid(exp, out_path)
+        v = _version_of(exp["name"])
+        by_version.setdefault(v, []).append(exp)
 
-    print(f"\nAll outputs in: {OUT_DIR}")
+    for version in sorted(by_version.keys()):
+        version_done = by_version[version]
+        version_dir = os.path.join(OUT_DIR, version)
+        grids_dir = os.path.join(version_dir, "top_images_grids")
+        os.makedirs(grids_dir, exist_ok=True)
+
+        print("=" * 80)
+        print(f"VERSION: {version}  ({len(version_done)} experiments)")
+        print("=" * 80)
+
+        summary = build_summary(version_done)
+        csv_path = os.path.join(version_dir, "summary.csv")
+        summary.to_csv(csv_path, index=False)
+        print(f"  Saved: {csv_path}")
+
+        cols_to_show = ["name", "best_reward", "total_images", "final_bg_ssim",
+                        "final_fg_clip", "final_entropy", "best_mask"]
+        avail = [c for c in cols_to_show if c in summary.columns]
+        print(summary[avail].to_string(index=False))
+        print()
+
+        plot_training_curves(version_done, os.path.join(version_dir, "training_curves.png"))
+        plot_learned_probs(version_done, os.path.join(version_dir, "learned_probs.png"))
+
+        for exp in version_done:
+            out_path = os.path.join(grids_dir, f"{exp['name']}_top_grid.jpg")
+            build_top_images_grid(exp, out_path)
+        print()
+
+    print(f"\nAll outputs in: {OUT_DIR}/<version>/")
 
 
 if __name__ == "__main__":
