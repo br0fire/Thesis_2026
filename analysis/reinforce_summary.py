@@ -44,14 +44,11 @@ EXPERIMENTS = [
     "horse_v3", "room_v3", "snow_volcano_v3", "butterfly_hummingbird_v3", "sail_pirate_v3",
     "bgrich_candle_crystal_v3",
     # v4: geometric-mean reward + mean_reward MA plateau stop
-    "catdog_v4", "car_taxi_v4", "sunflower_lavender_v4", "chair_throne_v4",
     "penguin_flamingo_v4", "violin_guitar_v4",
     "bgrich_teapot_globe_v4", "bgrich_typewriter_laptop_v4",
     # v5: geometric-mean reward + slope-based plateau stop
-    "catdog_v5", "car_taxi_v5", "sunflower_lavender_v5", "chair_throne_v5",
     "penguin_flamingo_v5", "violin_guitar_v5",
     "bgrich_teapot_globe_v5", "bgrich_typewriter_laptop_v5",
-    "catdog_v6", "car_taxi_v6", "sunflower_lavender_v6", "chair_throne_v6",
     "penguin_flamingo_v6", "violin_guitar_v6",
     "bgrich_teapot_globe_v6", "bgrich_typewriter_laptop_v6",
 ]
