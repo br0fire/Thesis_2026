@@ -473,27 +473,92 @@ class RewardComputer:
 # Segmentation bootstrap
 # ────────────────────────────────────────────
 
-def compute_segmentation(source_image_tensor, seg_prompt, device, dilate_px=10, threshold=0.5):
-    """Run CLIPSeg on a source image tensor to get background mask.
-
-    Args:
-        source_image_tensor: (1, 3, H, W) float32 in [0,1].
-    Returns:
-        bg_mask: (H, W) numpy array, 1=background, 0=foreground.
-    """
-    from transformers import CLIPSegProcessor, CLIPSegForImageSegmentation
-
-    # Convert tensor to PIL
+def _tensor_to_pil(source_image_tensor):
     img_np = (source_image_tensor[0].permute(1, 2, 0).cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
-    pil_img = Image.fromarray(img_np)
+    return Image.fromarray(img_np)
+
+
+def _segment_gdino_sam(pil_img, seg_prompt, device):
+    """Grounding DINO (find bbox) → SAM 2 (pixel-perfect mask).
+    Works on tiny models (~320 MB total) for speed."""
+    from transformers import (
+        AutoProcessor, AutoModelForZeroShotObjectDetection,
+        Sam2Model, Sam2Processor,
+    )
     H, W = pil_img.size[1], pil_img.size[0]
 
+    # Step 1: Grounding DINO finds bbox(es) matching the text prompt
+    gdino_proc = AutoProcessor.from_pretrained("IDEA-Research/grounding-dino-tiny")
+    gdino_model = AutoModelForZeroShotObjectDetection.from_pretrained(
+        "IDEA-Research/grounding-dino-tiny").to(device).eval()
+
+    # Grounding DINO requires a trailing period on the prompt
+    prompt = seg_prompt.strip().rstrip(".") + "."
+    inputs = gdino_proc(images=pil_img, text=prompt, return_tensors="pt").to(device)
+    with torch.no_grad():
+        outputs = gdino_model(**inputs)
+    results = gdino_proc.post_process_grounded_object_detection(
+        outputs, inputs["input_ids"],
+        threshold=0.25, text_threshold=0.25,
+        target_sizes=[(H, W)],
+    )
+
+    boxes = results[0]["boxes"]
+    scores = results[0]["scores"]
+    if len(boxes) == 0:
+        del gdino_model, gdino_proc
+        torch.cuda.empty_cache()
+        raise RuntimeError(f"Grounding DINO found no boxes for prompt '{seg_prompt}'")
+
+    # Take the top-scoring box
+    best_idx = int(scores.argmax().item())
+    best_box = boxes[best_idx].cpu().numpy().tolist()
+    best_score = float(scores[best_idx].item())
+    print(f"  Grounding DINO: best box score={best_score:.3f}, "
+          f"bbox={[int(x) for x in best_box]}")
+
+    del gdino_model, gdino_proc
+    torch.cuda.empty_cache()
+
+    # Step 2: SAM 2 refines that bbox into a pixel-perfect mask
+    sam_proc = Sam2Processor.from_pretrained("facebook/sam2-hiera-tiny")
+    sam_model = Sam2Model.from_pretrained("facebook/sam2-hiera-tiny").to(device).eval()
+
+    inputs = sam_proc(
+        images=pil_img,
+        input_boxes=[[best_box]],
+        return_tensors="pt",
+    ).to(device)
+    with torch.no_grad():
+        outputs = sam_model(**inputs, multimask_output=False)
+
+    masks = sam_proc.post_process_masks(
+        outputs.pred_masks.cpu(),
+        inputs["original_sizes"].cpu(),
+    )
+    mask = masks[0].cpu().numpy()
+    if mask.ndim == 4:
+        mask = mask[0, 0]
+    elif mask.ndim == 3:
+        mask = mask[0]
+    foreground = (mask > 0.5).astype(np.uint8)
+
+    del sam_model, sam_proc
+    torch.cuda.empty_cache()
+
+    return foreground
+
+
+def _segment_clipseg(pil_img, seg_prompt, device, dilate_px=10, threshold=0.5):
+    """Fallback: CLIPSeg with auto-lowering threshold."""
+    from transformers import CLIPSegProcessor, CLIPSegForImageSegmentation
+
+    H, W = pil_img.size[1], pil_img.size[0]
     processor = CLIPSegProcessor.from_pretrained("CIDAS/clipseg-rd64-refined")
     model = CLIPSegForImageSegmentation.from_pretrained("CIDAS/clipseg-rd64-refined").to(device)
 
     inputs = processor(text=[seg_prompt], images=[pil_img], return_tensors="pt", padding=True)
     inputs = {k: v.to(device) for k, v in inputs.items()}
-
     with torch.no_grad():
         outputs = model(**inputs)
 
@@ -503,28 +568,21 @@ def compute_segmentation(source_image_tensor, seg_prompt, device, dilate_px=10, 
     upsampled = F.interpolate(
         logits.unsqueeze(1).float(), size=(H, W), mode="bilinear", align_corners=False
     ).squeeze()
-
     prob = torch.sigmoid(upsampled).cpu().numpy()
     print(f"  CLIPSeg prob range: min={prob.min():.3f} max={prob.max():.3f} mean={prob.mean():.3f}")
 
-    # Try the target threshold first. If it yields zero foreground (common for
-    # dark/atmospheric images), fall back to progressively lower thresholds.
     foreground = (prob > threshold).astype(np.uint8)
-    used_threshold = threshold
     if foreground.sum() == 0:
         for fallback in (0.3, 0.15, 0.05):
             if fallback >= threshold:
                 continue
             foreground = (prob > fallback).astype(np.uint8)
             if foreground.sum() > 0:
-                used_threshold = fallback
                 print(f"  CLIPSeg threshold auto-lowered: {threshold:.2f} → {fallback:.2f}")
                 break
-    # Last-resort fallback: use the top-quantile pixels (best-effort)
     if foreground.sum() == 0:
         q = np.quantile(prob, 0.90)
         foreground = (prob >= q).astype(np.uint8)
-        used_threshold = float(q)
         print(f"  CLIPSeg: all thresholds failed, using top-10% quantile={q:.3f}")
 
     if dilate_px > 0:
@@ -534,10 +592,38 @@ def compute_segmentation(source_image_tensor, seg_prompt, device, dilate_px=10, 
 
     del model, processor
     torch.cuda.empty_cache()
+    return foreground
+
+
+def compute_segmentation(source_image_tensor, seg_prompt, device, method="gdino_sam"):
+    """Compute a background mask for the source image.
+
+    Args:
+        source_image_tensor: (1, 3, H, W) float32 in [0,1].
+        seg_prompt: text description of the foreground object.
+        device: torch device.
+        method: 'gdino_sam' (default) uses Grounding DINO + SAM 2 for
+            pixel-perfect masks. 'clipseg' falls back to the coarser CLIPSeg
+            pipeline. If gdino_sam fails to find a box, automatically falls
+            back to clipseg.
+    Returns:
+        bg_mask: (H, W) numpy array, 1=background, 0=foreground.
+    """
+    pil_img = _tensor_to_pil(source_image_tensor)
+
+    if method == "gdino_sam":
+        try:
+            print(f"  Running Grounding DINO + SAM 2 with prompt: '{seg_prompt}'")
+            foreground = _segment_gdino_sam(pil_img, seg_prompt, device)
+        except Exception as e:
+            print(f"  Grounding DINO + SAM 2 failed ({e}); falling back to CLIPSeg")
+            foreground = _segment_clipseg(pil_img, seg_prompt, device)
+    else:
+        foreground = _segment_clipseg(pil_img, seg_prompt, device)
 
     bg_mask = 1 - foreground
     print(f"  Segmentation: foreground={100 * (1 - bg_mask.mean()):.1f}%, "
-          f"bg={100 * bg_mask.mean():.1f}% (threshold={used_threshold:.2f})")
+          f"bg={100 * bg_mask.mean():.1f}%")
     return bg_mask
 
 
@@ -578,7 +664,7 @@ def train_reinforce(args):
         source_img = generator.generate(zeros_mask)
         seg_prompt = args.seg_prompt or args.source_prompt
         print(f"  Running CLIPSeg with prompt: '{seg_prompt}'")
-        bg_mask = compute_segmentation(source_img, seg_prompt, device)
+        bg_mask = compute_segmentation(source_img, seg_prompt, device, method=args.seg_method)
 
     # Save source image for reference
     src_np = (source_img[0].permute(1, 2, 0).cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
@@ -831,7 +917,11 @@ if __name__ == "__main__":
     p.add_argument("--top_k", type=int, default=10)
     p.add_argument("--log_interval", type=int, default=10)
     # Segmentation
-    p.add_argument("--seg_prompt", default=None, help="Prompt for CLIPSeg (defaults to source_prompt)")
+    p.add_argument("--seg_prompt", default=None, help="Prompt for segmentation (defaults to source_prompt)")
+    p.add_argument("--seg_method", choices=["gdino_sam", "clipseg"], default="gdino_sam",
+                   help="Segmentation pipeline. Default 'gdino_sam' uses Grounding DINO "
+                        "(find bbox) + SAM 2 (refine mask) — pixel-perfect on full resolution. "
+                        "'clipseg' is a coarser fallback.")
     p.add_argument("--mask", default=None, help="Pre-computed background mask (.npy)")
     # Vision-language model for reward
     p.add_argument("--vision_model", default="google/siglip2-so400m-patch14-384",
