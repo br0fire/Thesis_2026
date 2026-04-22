@@ -1,0 +1,75 @@
+\chapter{Literature review}
+
+\section{Latent Diffusion Models}
+
+Rombach et al.~\cite{rombach2022high} moved diffusion into a compressed latent space and enabled high-resolution synthesis. CLIP embeddings~\cite{radford2021learning} condition generation via cross-attention. Ho et al.~\cite{ho2020denoising} formalised iterative denoising. Song et al.~\cite{song2020denoising} introduced DDIM for deterministic sampling and inversion. Ho and Salimans~\cite{ho2022classifier} showed that classifier-free guidance improves quality. Flow-matching models~\cite{lipman2023flow} recast generation as an ODE along a learned velocity field; FLUX~\cite{flux2024} is a rectified-flow model that removes the DDIM-inversion step from the editing pipeline. We use the FLUX.2-klein-base-9B distilled checkpoint as the generative backbone for the REINFORCE experiments.
+
+\section{Image Editing Methods}
+
+\textbf{SDEdit}~\cite{meng2021sdedit} adds noise to the source and denoises with the target prompt. One scalar controls the trade-off. No finer control.
+
+\textbf{DiffEdit}~\cite{couairon2022diffedit} generates an editing mask by comparing noise predictions under source and target prompts. Edits apply inside the mask only.
+
+\textbf{DreamBooth}~\cite{ruiz2023dreambooth} fine-tunes weights to bind a token to a subject. Requires optimization per subject.
+
+\textbf{Null-Text Inversion}~\cite{mokady2023null} optimizes unconditional embeddings during DDIM inversion for faithful reconstruction under classifier-free guidance. We use this as our inversion backbone for the SD~v1.5 exhaustive experiments.
+
+\section{Prompt-to-Prompt}
+\label{sec:p2p}
+
+P2P~\cite{hertz2022prompt} is the closest prior work. Both methods operate per-timestep, preserve source structure, and recognize timestep role specialization. They differ in where they intervene.
+
+\subsection{Mechanism}
+
+Cross-attention maps $M = \text{Softmax}(QK^\top / \sqrt{d})$ control which pixels attend to which words. P2P runs two parallel diffusion processes and injects the source's attention maps into the target's denoising. The target uses its own prompt for key/value projections (what semantics appear) but the source's attention weights (where they appear).
+
+\subsection{Edit Types}
+
+\textbf{Word swap:} inject source maps for first $\tau$ steps, release after. \textbf{Refinement:} aligned tokens get source maps, new tokens develop their own. \textbf{Re-weighting:} scale a token's attention by factor $c$.
+
+\subsection{Comparison with DCS}
+
+\begin{table}[H]
+    \centering
+    \caption{P2P vs.\ DCS.}
+    \begin{tabular}{lll}
+    \toprule
+    \textbf{Aspect} & \textbf{P2P} & \textbf{DCS (ours)} \\
+    \midrule
+    Control point & Attention maps inside UNet & Text conditioning input \\
+    Model access & Requires attention hooks & Black-box \\
+    Schedule shape & Monotonic threshold $\tau$ & Arbitrary binary pattern \\
+    Spatial control & Local blend from attention & Temporal only \\
+    Parameter selection & Manual & Exhaustive search or REINFORCE \\
+    Quantitative eval & None & Segmentation-aware reward \\
+    Compute (exhaustive) & ${\sim}2\times$ generation & ${\sim}2^{20}\times$ generation \\
+    Compute (REINFORCE)  & n/a & ${\le}640\times$ generation \\
+    \bottomrule
+    \end{tabular}
+    \label{tab::p2p_vs_dcs}
+\end{table}
+
+DCS explores all $2^{20}$ binary patterns including non-contiguous ones that P2P cannot express. DCS requires no token alignment between prompts. P2P published no quantitative metrics; our segmentation-aware reward fills this gap. P2P locks spatial layout via attention maps, preventing geometric edits. DCS lets the model reorganize structure.
+
+P2P runs in real time. Exhaustive DCS on SD~v1.5 takes ${\sim}12$ hours on 8~A100s. Our FLUX.2 REINFORCE variant brings this down by two orders of magnitude (${\le}640$ generations per edit). P2P gives per-word spatial control; DCS operates only in the temporal dimension.
+
+DCS's forward-step mask is structurally analogous to P2P's word swap with injection fraction $\tau/T$. Our exhaustive search validates the source-early, target-late pattern that P2P assumed.
+
+\section{Policy-gradient search over discrete decisions}
+\label{sec:reinforce_lit}
+
+\textbf{REINFORCE}~\cite{williams1992simple} is the canonical Monte-Carlo policy-gradient estimator: given a stochastic policy $\pi_\theta$ and a scalar reward $R$, an unbiased estimate of $\nabla_\theta \mathbb{E}_{\tau\sim\pi_\theta}[R(\tau)]$ is $R(\tau)\,\nabla_\theta \log \pi_\theta(\tau)$. A per-step EMA baseline $b$ is subtracted to reduce variance: $(R-b)\nabla_\theta \log \pi_\theta$. Entropy regularisation $-\beta H(\pi_\theta)$ prevents early-collapse of the Bernoulli logits. These choices match standard practice in discrete-action RL~\cite{sutton1999policy,mnih2016async}.
+
+Policy-gradient methods have been used inside diffusion training to improve reward alignment (DDPO~\cite{black2023ddpo}, DPOK~\cite{fan2023dpok}), but they update the \emph{diffusion weights}. Our setting is different: the diffusion model is frozen; the only learnable parameters are the $N=14$ Bernoulli logits that select conditioning per timestep. This keeps the method training-free with respect to the diffusion backbone.
+
+\section{Inference-time trajectory search}
+
+Ma et al.~\cite{ma2025inference} show generation improves when searching over noise candidates. DSearch~\cite{li2025dynamic} formalises this as dynamic tree search. Li et al.~\cite{li2024derivative} explore derivative-free guidance in continuous-valued settings. Our work differs by (i)~searching the discrete per-step conditioning schedule rather than the continuous noise, and (ii)~using REINFORCE directly on the reward instead of bespoke heuristics.
+
+\section{Flow Matching}
+
+FlowEdit~\cite{kulikov2024flowedit} and FireFlow~\cite{deng2024fireflow} use ODEs between source and target distributions. Wang et al.~\cite{wang2024taming} stabilise rectified-flow inversion. UnifyEdit~\cite{mao2025tuning} introduces adaptive timestep scheduling. None explore the full conditioning schedule space.
+
+\section{Vision-language reward models}
+
+CLIP~\cite{radford2021learning} was the original contrastive image-text model and is the default scoring backbone for generative-model evaluation (e.g.\ CLIP-Score). SigLIP and SigLIP~2~\cite{zhai2023siglip,tschannen2025siglip2} replace the softmax contrastive loss with a pairwise sigmoid, improving zero-shot classification and text-image alignment. We use \texttt{google/siglip2-so400m-patch14-384} as the reward vision-language model in the FLUX.2 phase; a direct comparison on the same images shows lower variance and cleaner reward gradients than CLIP ViT-B/32. Segment Anything~2~\cite{ravi2024sam2} and the open-vocabulary detector Grounding DINO~\cite{liu2024groundingdino} together provide pixel-perfect foreground masks from a short seg prompt; the recent SAM~3.1 distilled variant runs ${\sim}10\times$ faster at matching quality and is our default in the FLUX.2 pipeline.

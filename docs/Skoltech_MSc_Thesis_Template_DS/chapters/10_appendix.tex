@@ -1,0 +1,171 @@
+\chapter*{Appendix: editing prompts}
+\addcontentsline{toc}{chapter}{Appendix: editing prompts}
+
+The appendix lists the source, target, and segmentation prompt triplets used in every editing task referenced in the thesis. All targets retain the source's scene description verbatim and change only the object noun; the segmentation prompt names the object that SAM~3.1 should locate.
+
+\section*{Motivational experiments (SD~v1.5, exhaustive)}
+
+\paragraph{Cat $\to$ Dog.}
+\begin{itemize}
+    \item \textbf{source:} ``tabby kitten walking confidently across a stone pavement.''
+    \item \textbf{target:} ``tabby dog walking confidently across a stone pavement.''
+    \item \textbf{seg:} ``cat''
+\end{itemize}
+
+\paragraph{Horse $\to$ Robot horse.}
+\begin{itemize}
+    \item \textbf{source:} ``a horse on the grass.''
+    \item \textbf{target:} ``a robot horse on the grass.''
+    \item \textbf{seg:} ``horse''
+\end{itemize}
+
+\section*{Sweep experiments (FLUX.2, 6 tasks $\times$ 8 configs)}
+
+\paragraph{violin $\to$ guitar.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution photo of a polished wooden violin resting on a dark velvet cloth draped over an antique wooden table, soft warm spotlight from above, a blurred concert hall with red curtains and empty seats in the background, dramatic chiaroscuro lighting, 4k, product photography style.''
+    \item \textbf{target:} ``A high-resolution photo of a sleek black electric guitar resting on a dark velvet cloth draped over an antique wooden table, soft warm spotlight from above, a blurred concert hall with red curtains and empty seats in the background, dramatic chiaroscuro lighting, 4k, product photography style.''
+    \item \textbf{seg:} ``violin''
+\end{itemize}
+
+\paragraph{penguin $\to$ flamingo.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution wildlife photo of an emperor penguin standing on a flat icy shore, with a calm dark blue ocean behind it, distant icebergs and snow-covered mountains on the horizon, overcast sky with soft gray clouds, crisp polar light, 4k, National Geographic photography style.''
+    \item \textbf{target:} ``A high-resolution wildlife photo of a pink flamingo standing on a flat icy shore, with a calm dark blue ocean behind it, distant icebergs and snow-covered mountains on the horizon, overcast sky with soft gray clouds, crisp polar light, 4k, National Geographic photography style.''
+    \item \textbf{seg:} ``penguin''
+\end{itemize}
+
+\paragraph{butterfly $\to$ hummingbird.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution macro photo of a monarch butterfly with orange and black wings perched on a vibrant pink hibiscus flower, lush green garden foliage blurred in the background, tiny water droplets on the petals, soft natural daylight, shallow depth of field, 4k, macro photography style.''
+    \item \textbf{target:} ``A high-resolution macro photo of a tiny iridescent green hummingbird hovering near a vibrant pink hibiscus flower, lush green garden foliage blurred in the background, tiny water droplets on the petals, soft natural daylight, shallow depth of field, 4k, macro photography style.''
+    \item \textbf{seg:} ``butterfly''
+\end{itemize}
+
+\paragraph{bgrich typewriter $\to$ laptop.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution photo of a vintage black typewriter on a cluttered wooden writer's desk, surrounded by towering stacks of manuscript papers with handwritten edits, three half-empty coffee mugs, a jar of ballpoint pens and pencils, pink and yellow sticky notes with scribbled reminders, a silver framed family photograph, a small potted succulent plant, a bronze gooseneck desk lamp, crumpled paper balls on the floor, a tall bookshelf filled with novels in the background, a wall calendar with red circled dates, and a brass letter opener, warm afternoon sunlight through a window, 4k, lifestyle photography.''
+    \item \textbf{target:} ``A high-resolution photo of a sleek silver open laptop computer on a cluttered wooden writer's desk, surrounded by towering stacks of manuscript papers with handwritten edits, three half-empty coffee mugs, a jar of ballpoint pens and pencils, pink and yellow sticky notes with scribbled reminders, a silver framed family photograph, a small potted succulent plant, a bronze gooseneck desk lamp, crumpled paper balls on the floor, a tall bookshelf filled with novels in the background, a wall calendar with red circled dates, and a brass letter opener, warm afternoon sunlight through a window, 4k, lifestyle photography.''
+    \item \textbf{seg:} ``typewriter''
+\end{itemize}
+
+\paragraph{bgrich teapot $\to$ globe.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution photo of a porcelain teapot on a polished dark mahogany desk in a Victorian study, surrounded by stacks of leather-bound books, a brass compass, an ink well with a white quill pen, round reading glasses, a smoking pipe in an ashtray, rolled parchment maps, a green-shaded banker's desk lamp, an antique pocket watch, and a worn leather armchair in the background, warm amber light streaming through a tall arched window, dust motes floating in the air, oil painting on the wall, 4k, fine art photography.''
+    \item \textbf{target:} ``A high-resolution photo of an antique terrestrial globe on a polished dark mahogany desk in a Victorian study, surrounded by stacks of leather-bound books, a brass compass, an ink well with a white quill pen, round reading glasses, a smoking pipe in an ashtray, rolled parchment maps, a green-shaded banker's desk lamp, an antique pocket watch, and a worn leather armchair in the background, warm amber light streaming through a tall arched window, dust motes floating in the air, oil painting on the wall, 4k, fine art photography.''
+    \item \textbf{seg:} ``teapot''
+\end{itemize}
+
+\paragraph{bgrich candle $\to$ crystal.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution photo of a tall beeswax candle with a flickering flame on a cluttered wooden workbench in an alchemist's workshop, surrounded by bubbling glass flasks of colored potions, dusty spellbooks, dried herbs hanging from the ceiling beams, a brass astrolabe, a human skull, raven feathers, a stone mortar and pestle, rolled yellowed scrolls, glowing amber jars of unknown substances, iron tongs, and a cauldron simmering on coals, moody chiaroscuro lighting with deep shadows, 4k, atmospheric fantasy photography.''
+    \item \textbf{target:} ``A high-resolution photo of a glowing purple crystal cluster on a cluttered wooden workbench in an alchemist's workshop, surrounded by bubbling glass flasks of colored potions, dusty spellbooks, dried herbs hanging from the ceiling beams, a brass astrolabe, a human skull, raven feathers, a stone mortar and pestle, rolled yellowed scrolls, glowing amber jars of unknown substances, iron tongs, and a cauldron simmering on coals, moody chiaroscuro lighting with deep shadows, 4k, atmospheric fantasy photography.''
+    \item \textbf{seg:} ``candle''
+\end{itemize}
+
+\section*{Background-rich suite (FLUX.2, 15 tasks)}
+
+\paragraph{camera $\to$ binoculars.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution photo of a vintage black film camera on a worn leather explorer's trunk, surrounded by rolled yellowing maps, a brass compass, a weathered pith helmet, a canvas field notebook with scribbles, loose sepia photographs, a canvas rucksack in the corner, hanging safari hats in the background, amber kerosene lantern light, rough wooden plank floor, 4k, adventure photography style.''
+    \item \textbf{target:} ``A high-resolution photo of vintage brass binoculars on a worn leather explorer's trunk, surrounded by rolled yellowing maps, a brass compass, a weathered pith helmet, a canvas field notebook with scribbles, loose sepia photographs, a canvas rucksack in the corner, hanging safari hats in the background, amber kerosene lantern light, rough wooden plank floor, 4k, adventure photography style.''
+    \item \textbf{seg:} ``camera''
+\end{itemize}
+
+\paragraph{chess $\to$ checkers.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution photo of a carved wooden chessboard with ivory and ebony pieces on a polished walnut games table in a gentleman's club library, surrounded by two empty crystal tumblers, a half-empty decanter of amber whiskey, a humidor with cigars, a worn leather cigar cutter, a silver ashtray, scattered sports-journal magazines, a ticking grandfather clock in the corner, deep red velvet chairs, and stained-glass lamps glowing warmly, 4k, classic interior photography.''
+    \item \textbf{target:} ``A high-resolution photo of a red and black checkers board with circular wooden pieces on a polished walnut games table in a gentleman's club library, surrounded by two empty crystal tumblers, a half-empty decanter of amber whiskey, a humidor with cigars, a worn leather cigar cutter, a silver ashtray, scattered sports-journal magazines, a ticking grandfather clock in the corner, deep red velvet chairs, and stained-glass lamps glowing warmly, 4k, classic interior photography.''
+    \item \textbf{seg:} ``chessboard''
+\end{itemize}
+
+\paragraph{crown $\to$ tiara.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution photo of an ornate golden crown with red rubies on a red velvet cushion inside a glass-topped display case in a royal treasury vault, surrounded by scepters, silver coins in open chests, a jewel-encrusted sword, ancient illuminated manuscripts, brass keys on a ring, silk tapestries with heraldic crests on the stone walls, iron-banded wooden chests in the background, flickering torchlight creating dancing shadows, 4k, historical photography.''
+    \item \textbf{target:} ``A high-resolution photo of a delicate silver tiara with diamonds on a red velvet cushion inside a glass-topped display case in a royal treasury vault, surrounded by scepters, silver coins in open chests, a jewel-encrusted sword, ancient illuminated manuscripts, brass keys on a ring, silk tapestries with heraldic crests on the stone walls, iron-banded wooden chests in the background, flickering torchlight creating dancing shadows, 4k, historical photography.''
+    \item \textbf{seg:} ``crown''
+\end{itemize}
+
+\paragraph{globe $\to$ orrery.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution photo of an antique terrestrial globe on a polished dark mahogany desk in a Victorian study, surrounded by stacks of leather-bound books, a brass compass, an ink well with a white quill pen, round reading glasses, a smoking pipe in an ashtray, rolled parchment maps, a green-shaded banker's desk lamp, an antique pocket watch, and a worn leather armchair in the background, warm amber light streaming through a tall arched window, 4k, fine art photography.''
+    \item \textbf{target:} ``A high-resolution photo of a brass mechanical orrery on a polished dark mahogany desk in a Victorian study, surrounded by stacks of leather-bound books, a brass compass, an ink well with a white quill pen, round reading glasses, a smoking pipe in an ashtray, rolled parchment maps, a green-shaded banker's desk lamp, an antique pocket watch, and a worn leather armchair in the background, warm amber light streaming through a tall arched window, 4k, fine art photography.''
+    \item \textbf{seg:} ``globe''
+\end{itemize}
+
+\paragraph{guitar $\to$ banjo.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution photo of a worn acoustic guitar leaning against a weathered wooden porch chair on a sun-bleached country farmhouse veranda, surrounded by an old wicker rocking chair with a plaid blanket, a chipped enamel mug with cold coffee, a straw cowboy hat, a stack of sheet music weighed down by a river stone, an old boot full of flowers, a hanging wind chime, a dusty picker's fiddle case, fields of tall golden grass stretching to the horizon, warm late-afternoon light, 4k, rustic photography style.''
+    \item \textbf{target:} ``A high-resolution photo of a worn five-string banjo leaning against a weathered wooden porch chair on a sun-bleached country farmhouse veranda, surrounded by an old wicker rocking chair with a plaid blanket, a chipped enamel mug with cold coffee, a straw cowboy hat, a stack of sheet music weighed down by a river stone, an old boot full of flowers, a hanging wind chime, a dusty picker's fiddle case, fields of tall golden grass stretching to the horizon, warm late-afternoon light, 4k, rustic photography style.''
+    \item \textbf{seg:} ``guitar''
+\end{itemize}
+
+\paragraph{lantern $\to$ candelabra.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution photo of an iron lantern with a flickering yellow flame on a long rough-hewn oak dining table in a medieval castle banquet hall, surrounded by pewter goblets, wooden trenchers with bread and roasted apples, a steaming ceramic jug, scattered bone knives, embroidered linen napkins, a rolled parchment scroll with a red wax seal, a sheathed dagger, tapestries with heraldic crests on the stone walls, iron-banded heavy wooden doors in the background, moody shadows dancing on the walls, 4k, cinematic photography.''
+    \item \textbf{target:} ``A high-resolution photo of an ornate silver candelabra with five lit candles on a long rough-hewn oak dining table in a medieval castle banquet hall, surrounded by pewter goblets, wooden trenchers with bread and roasted apples, a steaming ceramic jug, scattered bone knives, embroidered linen napkins, a rolled parchment scroll with a red wax seal, a sheathed dagger, tapestries with heraldic crests on the stone walls, iron-banded heavy wooden doors in the background, moody shadows dancing on the walls, 4k, cinematic photography.''
+    \item \textbf{seg:} ``lantern''
+\end{itemize}
+
+\paragraph{piano $\to$ harp.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution miniature detail photo of a small black upright piano on a marble side table in an elegant music salon, surrounded by a stack of leather-bound sheet music, a single long-stemmed rose in a crystal vase, an ornate silver candlestick with a red candle, a porcelain figurine of a ballerina, velvet-backed chairs, gilt mirror and chandelier in the background, silk wallpaper with damask pattern, warm golden hour light through tall windows, 4k, luxury interior photography.''
+    \item \textbf{target:} ``A high-resolution miniature detail photo of a small golden harp on a marble side table in an elegant music salon, surrounded by a stack of leather-bound sheet music, a single long-stemmed rose in a crystal vase, an ornate silver candlestick with a red candle, a porcelain figurine of a ballerina, velvet-backed chairs, gilt mirror and chandelier in the background, silk wallpaper with damask pattern, warm golden hour light through tall windows, 4k, luxury interior photography.''
+    \item \textbf{seg:} ``piano''
+\end{itemize}
+
+\paragraph{pocketwatch $\to$ compass.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution photo of an ornate silver pocket watch on a dark oak navigator's table, surrounded by rolled nautical charts, a brass sextant, ink bottle with a steel-nib pen, a ship's logbook with inked entries, a small brass ship's bell, a length of thick rope, an oil lamp swinging on a hook, and a porthole showing stormy sea in the background, moody warm lamp light, 4k, maritime photography.''
+    \item \textbf{target:} ``A high-resolution photo of an ornate brass marine compass on a dark oak navigator's table, surrounded by rolled nautical charts, a brass sextant, ink bottle with a steel-nib pen, a ship's logbook with inked entries, a small brass ship's bell, a length of thick rope, an oil lamp swinging on a hook, and a porthole showing stormy sea in the background, moody warm lamp light, 4k, maritime photography.''
+    \item \textbf{seg:} ``pocket watch''
+\end{itemize}
+
+\paragraph{revolver $\to$ flintlock.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution photo of a polished revolver handgun on a rough pine sheriff's desk in a wild west office, surrounded by scattered wanted posters with hand-drawn faces, a tin star badge, a half-empty whiskey glass, a leather-bound ledger open to a page of entries, brass bullet casings, a wooden truncheon, keyring with iron keys, a cowboy hat on a hook, a cast-iron pot-belly stove in the background, warm oil-lamp light, dusty floorboards, 4k, western photography style.''
+    \item \textbf{target:} ``A high-resolution photo of an antique flintlock pistol on a rough pine sheriff's desk in a wild west office, surrounded by scattered wanted posters with hand-drawn faces, a tin star badge, a half-empty whiskey glass, a leather-bound ledger open to a page of entries, brass bullet casings, a wooden truncheon, keyring with iron keys, a cowboy hat on a hook, a cast-iron pot-belly stove in the background, warm oil-lamp light, dusty floorboards, 4k, western photography style.''
+    \item \textbf{seg:} ``revolver''
+\end{itemize}
+
+\paragraph{sewing $\to$ typewriter.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution photo of a black cast-iron sewing machine on a worn wooden craft table in a seamstress's workshop, surrounded by spools of colorful thread, a tomato pincushion with many pins, scattered fabric swatches, paper dress patterns, a pair of silver scissors, a tape measure, a half-sewn dress on a mannequin in the background, bolts of fabric leaning against the wall, a wrought-iron dress form, warm afternoon light through a cracked window, 4k, artisan photography.''
+    \item \textbf{target:} ``A high-resolution photo of a black cast-iron typewriter on a worn wooden craft table in a seamstress's workshop, surrounded by spools of colorful thread, a tomato pincushion with many pins, scattered fabric swatches, paper dress patterns, a pair of silver scissors, a tape measure, a half-sewn dress on a mannequin in the background, bolts of fabric leaning against the wall, a wrought-iron dress form, warm afternoon light through a cracked window, 4k, artisan photography.''
+    \item \textbf{seg:} ``sewing machine''
+\end{itemize}
+
+\paragraph{skull $\to$ hourglass.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution photo of a weathered human skull on a cluttered wizard's study desk, surrounded by thick leather tomes with gilt lettering, bubbling glass flasks with colored liquids, a scroll with arcane symbols, a raven feather quill in an ink bottle, dried mandrake roots, an astrolabe, melting black candles in silver holders, a crystal ball on a metal stand, a tabby cat curled up in the background, shelves of jars with mysterious contents, deep indigo shadows, 4k, gothic photography style.''
+    \item \textbf{target:} ``A high-resolution photo of a weathered brass hourglass with red sand on a cluttered wizard's study desk, surrounded by thick leather tomes with gilt lettering, bubbling glass flasks with colored liquids, a scroll with arcane symbols, a raven feather quill in an ink bottle, dried mandrake roots, an astrolabe, melting black candles in silver holders, a crystal ball on a metal stand, a tabby cat curled up in the background, shelves of jars with mysterious contents, deep indigo shadows, 4k, gothic photography style.''
+    \item \textbf{seg:} ``skull''
+\end{itemize}
+
+\paragraph{teapot $\to$ samovar.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution photo of a floral porcelain teapot on a lace-covered antique side table in a Victorian parlor, surrounded by a stack of fine bone china cups and saucers, a silver sugar bowl, a crystal jam jar with spoon, a plate of crumpets, a fresh rose in a small vase, embroidered napkins, a paperback novel, and a tufted velvet armchair with cushions in the background, soft afternoon light through lace curtains, 4k, still life photography.''
+    \item \textbf{target:} ``A high-resolution photo of an elaborate brass Russian samovar on a lace-covered antique side table in a Victorian parlor, surrounded by a stack of fine bone china cups and saucers, a silver sugar bowl, a crystal jam jar with spoon, a plate of crumpets, a fresh rose in a small vase, embroidered napkins, a paperback novel, and a tufted velvet armchair with cushions in the background, soft afternoon light through lace curtains, 4k, still life photography.''
+    \item \textbf{seg:} ``teapot''
+\end{itemize}
+
+\paragraph{telescope $\to$ microscope.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution photo of a brass antique telescope on a cluttered wooden observation desk, surrounded by rolled star charts, a leather-bound astronomy journal, an astrolabe, vintage compasses, scattered graphite pencils, a cup of cold tea, a magnifying glass, an oil lamp with smoky glass, and a tall bookshelf with leather spines in the background, moonlit window casting pale blue light, dust motes in the air, 4k, fine art photography.''
+    \item \textbf{target:} ``A high-resolution photo of a brass antique microscope on a cluttered wooden observation desk, surrounded by rolled star charts, a leather-bound astronomy journal, an astrolabe, vintage compasses, scattered graphite pencils, a cup of cold tea, a magnifying glass, an oil lamp with smoky glass, and a tall bookshelf with leather spines in the background, moonlit window casting pale blue light, dust motes in the air, 4k, fine art photography.''
+    \item \textbf{seg:} ``telescope''
+\end{itemize}
+
+\paragraph{violin $\to$ cello.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution photo of a polished wooden violin resting on a red velvet cushion on an ornate music stand in a baroque music room, surrounded by scattered yellowing sheet music with hand-written notations, a brass metronome, a rosin block, a spare bow, a silver music stand, a grand piano with candelabras in the background, heavy burgundy velvet curtains, gilt-framed portraits on dark wood-paneled walls, warm chandelier light, 4k, classical photography style.''
+    \item \textbf{target:} ``A high-resolution photo of a polished wooden cello resting on a red velvet cushion on an ornate music stand in a baroque music room, surrounded by scattered yellowing sheet music with hand-written notations, a brass metronome, a rosin block, a spare bow, a silver music stand, a grand piano with candelabras in the background, heavy burgundy velvet curtains, gilt-framed portraits on dark wood-paneled walls, warm chandelier light, 4k, classical photography style.''
+    \item \textbf{seg:} ``violin''
+\end{itemize}
+
+\paragraph{wine $\to$ whiskey.}
+\begin{itemize}
+    \item \textbf{source:} ``A high-resolution photo of a dark green wine bottle with a red wax seal on a polished mahogany bartender's counter in a speakeasy, surrounded by crystal lowball glasses with amber liquid, a bowl of lemons and limes, a hammered-silver cocktail shaker, a jar of maraschino cherries, a wooden cigar box, silver jiggers and spoons, bar towels, tall bottles in the background, brass art-deco lamps, and a shelf of dusty books, dim warm tungsten lighting, 4k, moody photography.''
+    \item \textbf{target:} ``A high-resolution photo of a heavy crystal whiskey decanter with amber liquid on a polished mahogany bartender's counter in a speakeasy, surrounded by crystal lowball glasses with amber liquid, a bowl of lemons and limes, a hammered-silver cocktail shaker, a jar of maraschino cherries, a wooden cigar box, silver jiggers and spoons, bar towels, tall bottles in the background, brass art-deco lamps, and a shelf of dusty books, dim warm tungsten lighting, 4k, moody photography.''
+    \item \textbf{seg:} ``wine bottle''
+\end{itemize}

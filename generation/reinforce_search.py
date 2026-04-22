@@ -218,8 +218,9 @@ class DiffusionGenerator:
         pipe.tokenizer = None
         torch.cuda.empty_cache()
 
-        # Compile transformer
-        pipe.transformer = torch.compile(pipe.transformer, mode="max-autotune", fullgraph=False)
+        # Compile transformer with CUDA Graphs for low-overhead fixed-shape inference.
+        # "reduce-overhead" emits CUDA Graphs — big win when batch_size is fixed.
+        pipe.transformer = torch.compile(pipe.transformer, mode="reduce-overhead", fullgraph=False)
         pipe.set_progress_bar_config(disable=True)
         self.pipe = pipe
 
@@ -595,23 +596,69 @@ def _segment_clipseg(pil_img, seg_prompt, device, dilate_px=10, threshold=0.5):
     return foreground
 
 
-def compute_segmentation(source_image_tensor, seg_prompt, device, method="gdino_sam"):
+_SAM3_CACHE = {}
+
+
+def _segment_sam3(pil_img, seg_prompt, device):
+    """SAM 3.1 text-prompted segmentation (facebook/sam3.1).
+
+    ~30x faster than Grounding DINO + SAM 2 at similar mask quality. Returns
+    a (H, W) float32 foreground mask (1=object, 0=background)."""
+    import os
+    if "HF_TOKEN" not in os.environ:
+        raise RuntimeError("HF_TOKEN must be set in the environment before loading SAM 3.")
+    key = str(device)
+    if key not in _SAM3_CACHE:
+        from sam3.model_builder import build_sam3_image_model
+        from sam3.model.sam3_image_processor import Sam3Processor
+        model = build_sam3_image_model(device=str(device)).to(device).eval()
+        _SAM3_CACHE[key] = Sam3Processor(model)
+    processor = _SAM3_CACHE[key]
+
+    state = processor.set_image(pil_img)
+    output = processor.set_text_prompt(state=state, prompt=seg_prompt)
+    masks = output.get("masks")
+    H, W = pil_img.size[1], pil_img.size[0]
+    if masks is None or len(masks) == 0:
+        return np.zeros((H, W), dtype=np.float32)
+    if torch.is_tensor(masks):
+        masks = masks.detach().cpu().numpy()
+    masks = np.asarray(masks).squeeze()
+    if masks.ndim == 2:
+        return (masks > 0.5).astype(np.float32)
+    combined = np.zeros(masks.shape[-2:], dtype=np.float32)
+    for m in masks:
+        combined = np.maximum(combined, (m > 0.5).astype(np.float32))
+    return combined
+
+
+def compute_segmentation(source_image_tensor, seg_prompt, device, method="sam3"):
     """Compute a background mask for the source image.
 
     Args:
         source_image_tensor: (1, 3, H, W) float32 in [0,1].
         seg_prompt: text description of the foreground object.
         device: torch device.
-        method: 'gdino_sam' (default) uses Grounding DINO + SAM 2 for
-            pixel-perfect masks. 'clipseg' falls back to the coarser CLIPSeg
-            pipeline. If gdino_sam fails to find a box, automatically falls
-            back to clipseg.
+        method: 'sam3' (default) uses SAM 3.1 text-prompted segmentation — fastest
+            and highest quality. 'gdino_sam' uses Grounding DINO + SAM 2.
+            'clipseg' falls back to coarser CLIPSeg. SAM3 auto-falls-back to
+            gdino_sam on failure.
     Returns:
         bg_mask: (H, W) numpy array, 1=background, 0=foreground.
     """
     pil_img = _tensor_to_pil(source_image_tensor)
 
-    if method == "gdino_sam":
+    if method == "sam3":
+        try:
+            print(f"  Running SAM 3.1 with prompt: '{seg_prompt}'")
+            foreground = _segment_sam3(pil_img, seg_prompt, device)
+            if foreground.sum() == 0:
+                print(f"  SAM 3.1 returned empty mask; falling back to Grounding DINO + SAM 2")
+                foreground = _segment_gdino_sam(pil_img, seg_prompt, device)
+        except Exception as e:
+            print(f"  SAM 3.1 failed ({e}); falling back to Grounding DINO + SAM 2")
+            foreground = _segment_gdino_sam(pil_img, seg_prompt, device)
+    elif method == "gdino_sam":
         try:
             print(f"  Running Grounding DINO + SAM 2 with prompt: '{seg_prompt}'")
             foreground = _segment_gdino_sam(pil_img, seg_prompt, device)
@@ -653,10 +700,21 @@ def train_reinforce(args):
 
     # ── Phase 2: Generate source image and segment ──
     print("\n=== Phase 2: Source image & segmentation ===")
-    if args.mask:
+    # Prefer canonical source tensor + mask if provided (eliminates CUDA non-determinism
+    # by reusing the same reference across REINFORCE / exhaustive / baselines).
+    if args.source_tensor_pt and args.bg_mask_npy:
+        print(f"  Loading canonical source: {args.source_tensor_pt}")
+        source_img = torch.load(args.source_tensor_pt, map_location=device, weights_only=False)
+        if not torch.is_tensor(source_img):
+            raise TypeError("source_tensor_pt must contain a torch tensor")
+        source_img = source_img.to(device).float()
+        if source_img.dim() == 3:
+            source_img = source_img.unsqueeze(0)
+        print(f"  Loading canonical bg_mask: {args.bg_mask_npy}")
+        bg_mask = np.load(args.bg_mask_npy).astype(np.float32)
+    elif args.mask:
         print(f"  Using pre-computed mask: {args.mask}")
         bg_mask = np.load(args.mask)
-        # Generate source image for reward computation
         zeros_mask = torch.zeros(1, n_bits, device=device)
         source_img = generator.generate(zeros_mask)  # (1, 3, H, W)
     else:
@@ -685,6 +743,10 @@ def train_reinforce(args):
     side_by_side = np.concatenate([src_np, overlay], axis=1)  # (H, 2*W, 3)
     Image.fromarray(side_by_side).save(
         os.path.join(args.output_dir, "bg_mask_vis.jpg"), quality=92)
+
+    # Save the binary background mask so downstream analysis can reuse it
+    np.save(os.path.join(args.output_dir, "bg_mask.npy"),
+            (bg_mask > 0.5).astype(np.uint8))
 
     # Also generate and save target image (all-ones mask) as a reference
     ones_mask = torch.ones(1, n_bits, device=device)
@@ -716,7 +778,18 @@ def train_reinforce(args):
 
     # ── Phase 4: REINFORCE training ──
     print(f"\n=== Phase 4: REINFORCE training ({args.num_episodes} episodes, BS={args.batch_size}) ===", flush=True)
-    policy = BernoulliPolicy(n_bits, init_logit=0.0, device=device)
+    # Optional prior warmstart: load init probs from npy file
+    if args.init_probs_npy and os.path.isfile(args.init_probs_npy):
+        init_probs = np.load(args.init_probs_npy).astype(np.float32)
+        init_probs = np.clip(init_probs, 0.02, 0.98)
+        init_logits = np.log(init_probs / (1 - init_probs))
+        print(f"  Init policy from prior {args.init_probs_npy}: "
+              f"probs range [{init_probs.min():.2f}, {init_probs.max():.2f}]")
+        policy = BernoulliPolicy(n_bits, init_logit=0.0, device=device)
+        with torch.no_grad():
+            policy.logits.copy_(torch.from_numpy(init_logits).to(device))
+    else:
+        policy = BernoulliPolicy(n_bits, init_logit=0.0, device=device)
     optimizer = torch.optim.Adam([policy.logits], lr=args.lr)
 
     baseline = 0.0
@@ -918,11 +991,17 @@ if __name__ == "__main__":
     p.add_argument("--log_interval", type=int, default=10)
     # Segmentation
     p.add_argument("--seg_prompt", default=None, help="Prompt for segmentation (defaults to source_prompt)")
-    p.add_argument("--seg_method", choices=["gdino_sam", "clipseg"], default="gdino_sam",
+    p.add_argument("--seg_method", choices=["sam3", "gdino_sam", "clipseg"], default="sam3",
                    help="Segmentation pipeline. Default 'gdino_sam' uses Grounding DINO "
                         "(find bbox) + SAM 2 (refine mask) — pixel-perfect on full resolution. "
                         "'clipseg' is a coarser fallback.")
     p.add_argument("--mask", default=None, help="Pre-computed background mask (.npy)")
+    p.add_argument("--source_tensor_pt", default=None,
+                   help="Canonical source image tensor (.pt) to skip FLUX source generation")
+    p.add_argument("--bg_mask_npy", default=None,
+                   help="Canonical bg_mask (.npy) companion to --source_tensor_pt")
+    p.add_argument("--init_probs_npy", default=None,
+                   help="Prior initial Bernoulli probs for policy warmstart (.npy of shape (n_bits,))")
     # Vision-language model for reward
     p.add_argument("--vision_model", default="google/siglip2-so400m-patch14-384",
                    help="HF id for reward VLM. Supports CLIP (openai/clip-vit-*) and "

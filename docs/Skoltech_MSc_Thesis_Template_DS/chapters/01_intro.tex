@@ -1,0 +1,36 @@
+\chapter{Introduction}
+
+Text-to-image diffusion models~\cite{rombach2022high} produce photorealistic images from a prompt. Editing an existing image with a new prompt is harder: the edit must preserve unrelated content (background, composition, lighting) while replacing only what the prompt asks to change. SDEdit~\cite{meng2021sdedit} controls this trade-off with a single noise level. Prompt-to-Prompt~\cite{hertz2022prompt} injects cross-attention maps to lock the layout (see Section~\ref{sec:p2p}). DreamBooth~\cite{ruiz2023dreambooth} fine-tunes model weights. Each method pays a cost in flexibility, access-freeness, or speed.
+
+\paragraph{Relevance.}
+The denoising process traces a trajectory through latent space. Standard conditional generation fixes the text prompt across all $T$ timesteps. We change that: a binary mask $M \in \{0,1\}^T$ picks the source prompt ($0$) or the target prompt ($1$) per timestep. Choi et al.~\cite{choi2022perception} report that early denoising steps commit layout while late steps resolve details. We test the claim by searching the full space of $2^T$ binary schedules, then by learning a policy over that space.
+
+\paragraph{Two research questions drive this work.}
+\begin{enumerate}
+    \item Does the binary trajectory space matter? Do different masks produce visibly different outputs, and does the all-target mask $M=\mathbf{1}$ (running the target prompt through every step) already give a good edit? We answer by (i)~generating all $2^{20}$ masks on Stable Diffusion~v1.5 for two editing tasks and (ii)~measuring the all-ones reward against the per-task optimum on 15 further tasks on FLUX.2. Both probes say the trajectory space contains masks that beat $M=\mathbf{1}$, so a search method that reaches them earns its cost.
+    \item Can the search be cheap? Exhaustive evaluation of $2^{14}=16{,}384$ trajectories takes tens of GPU-hours per image. The reward is black-box (a vision-language score, not a differentiable loss) and the parameter space is $\{0,1\}^{14}$, which suits gradient-free policy-gradient search. We parameterise the policy as $N$ independent Bernoulli distributions and optimise it with REINFORCE~\cite{williams1992simple} against the segmentation-aware reward.
+\end{enumerate}
+
+\paragraph{Main purpose of the research.}
+Build a training-free editing framework that poses image editing as combinatorial search over binary conditioning paths. Map the structure of that space by exhaustive enumeration, then reach high-reward masks at a practical sampling budget with REINFORCE.
+
+\paragraph{Scientific novelty.}
+\begin{enumerate}
+    \item \textbf{Discrete Context Switching.} A binary mask $M \in \{0,1\}^T$ switches text conditioning per timestep. We leave the model weights untouched and treat the text encoder as a black box. Unlike P2P~\cite{hertz2022prompt}, DCS accepts arbitrary non-monotonic schedules and needs no access to cross-attention internals.
+
+    \item \textbf{Exhaustive baseline on SD~v1.5.} A multi-GPU pipeline generates all $2^{20}\approx 10^6$ masks per editing task using Null-Text Inversion~\cite{mokady2023null}, compiled UNet inference, and on-GPU DINOv2~\cite{oquab2023dinov2} feature extraction.
+
+    \item \textbf{Segmentation-aware reward.} CLIPSeg~\cite{luddecke2022image}+SAM~\cite{kirillov2023segment} produces a foreground/background mask. The reward splits into a background-preservation term (SSIM restricted to background pixels) and a foreground-editability term (cosine with a normalised delta text embedding on a cropped foreground).
+
+    \item \textbf{Trajectory-space analysis.} UMAP~\cite{mcinnes2018umap}+HDBSCAN~\cite{campello2013density} on DINOv2 features of the $\sim 10^6$ exhaustive outputs returns 52 clusters for cat$\to$dog and 13 for horse$\to$robot horse. The top-reward masks concentrate in a source-early / target-late sub-region, and the all-ones mask lands outside that sub-region on both tasks.
+
+    \item \textbf{REINFORCE on FLUX.2.} REINFORCE over $N=14$ independent Bernoulli logits runs on the FLUX.2-klein-base-9B flow-matching backbone with entropy regularisation, an exponential-moving-average advantage baseline, and plateau-based early stopping. On 15 text-only background-rich edits the policy converges inside 80 episodes ($\le 640$ generations) and beats the all-target baseline on 15 of 15 tasks.
+\end{enumerate}
+
+\paragraph{Statements for defense.}
+\begin{enumerate}
+    \item Binary prompt switching induces a structured space of editing outcomes without fine-tuning. The space contains trajectories that outperform the all-target baseline.
+    \item Top-reward trajectories activate source early and target late, which matches the exhaustive $2^{20}$ search on SD~v1.5 and the Bernoulli logits learned by REINFORCE on FLUX.2.
+    \item The segmentation-aware background/foreground reward works as a scalar signal for gradient-free policy optimisation.
+    \item REINFORCE with entropy regularisation and plateau early-stop cuts the search cost from $2^{14}=16{,}384$ generations to $\le 640$ without losing quality against a matched-budget random baseline.
+\end{enumerate}

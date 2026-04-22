@@ -1,0 +1,91 @@
+\chapter{Methodology}
+\label{ch:methods}
+
+We train a product-of-Bernoulli policy over $N=14$ bits with REINFORCE against the segmentation-aware reward of Section~\ref{sec:reward}. A single learnable bit drives two consecutive denoising steps ($T=2N=28$). The image generator is FLUX.2-klein-base-9B and stays a black box throughout: no gradients flow through it.
+
+\section{Backbone}
+
+The REINFORCE loop runs on the FLUX.2-klein-base-9B flow-matching backbone~\cite{flux2024}. FLUX renders the source prompt with a fixed random seed and that image serves as the source; no reference image is required. Every mask evaluation reuses the same noise, so output differences trace back to mask differences only. The setup needs no inversion step and reduces editing to schedule selection on a black-box sampler.
+
+\section{Policy}
+\label{sec:methods_reinforce}
+
+Let $\theta = (\theta_1,\dots,\theta_N)\in\mathbb{R}^N$, $N=14$. The policy
+\begin{equation}
+\pi_\theta(M) = \prod_{i=1}^N \text{Bern}\bigl(m_i \,\big|\, p_i\bigr), \quad p_i = \sigma(\theta_i),
+\end{equation}
+is a product of independent per-bit Bernoullis. The initial logits are zero ($p_i=0.5$ for all $i$) so the first episode samples uniformly from $\{0,1\}^{14}$.
+
+\section{REINFORCE update}
+\label{sec:reinforce_update}
+
+Each episode samples a batch of $K$ masks $\{M^{(k)}\}_{k=1}^K$, generates images $\mathbf{x}^{(k)}=\text{Gen}(M^{(k)})$ in one compiled-transformer call, and computes rewards $R^{(k)} = R(M^{(k)})$ from Equation~\ref{eq::reward_reinforce}.
+
+To reduce variance we subtract an EMA baseline $b$ (updated as $b \leftarrow 0.9\,b + 0.1\,\overline{R}$ every episode) and \emph{normalise} the resulting advantages across the batch, $A^{(k)} = (R^{(k)} - b) / (\text{std}_k R^{(k)} + 10^{-6})$. The REINFORCE loss with entropy regularisation is
+\begin{equation}
+\mathcal{L}(\theta) = - \frac{1}{K}\sum_{k=1}^{K} A^{(k)} \sum_{i=1}^{N} \log \pi_\theta(m_i^{(k)}) \;-\; \beta\, H(\pi_\theta),
+\end{equation}
+with $H(\pi_\theta) = -\sum_i p_i \log p_i + (1-p_i)\log(1-p_i)$. We backpropagate $\mathcal{L}$ through the \texttt{log\_prob} of the Bernoulli distribution; the image generator stays a black box, and no gradients flow through it. An Adam optimiser ($\eta=10^{-2}$) updates $\theta$.
+
+\begin{algorithm}[H]
+\caption{REINFORCE on Bernoulli path logits}
+\label{alg::reinforce}
+\begin{algorithmic}[1]
+\Require source/target/seg prompts, $N$ bits, batch $K$, max episodes $E_{\max}$, floor $E_{\min}$
+\State Generate source image $\mathbf{x}_{\text{src}}$ from $M=\mathbf{0}$ and fixed noise
+\State Compute background mask $\mathbf{B}$ via SAM~3.1 on $\mathbf{x}_{\text{src}}$ with seg prompt
+\State Init $\theta \gets \mathbf{0}$, $b \gets 0$, episode $\gets 0$
+\For{$e = 0, \dots, E_{\max}-1$}
+    \State Sample $K$ masks $M^{(k)} \sim \pi_\theta$; generate $\mathbf{x}^{(k)} = \text{Gen}(M^{(k)})$
+    \State Compute $R^{(k)} = R(M^{(k)})$ using $\mathbf{B}$ and $\psi(\Delta)$
+    \State Normalise advantages $A^{(k)} \leftarrow (R^{(k)} - b)/(\text{std}(R)+10^{-6})$
+    \State $\theta \gets \theta - \eta\,\nabla_\theta \mathcal{L}(\theta)$
+    \State $b \gets 0.9\,b + 0.1\,\overline{R}$
+    \If{$e \ge E_{\min}$ and \textbf{plateau}($\overline{R}$) or $H(\pi_\theta) < H_{\min}$}
+        \State \textbf{break}
+    \EndIf
+\EndFor
+\State Greedy mask $\hat{m}_i = \mathbb{1}[\sigma(\theta_i) > 0.5]$; return $\text{Gen}(\hat{M})$
+\end{algorithmic}
+\end{algorithm}
+
+\section{Early stopping}
+
+Hard cap on episodes alone wastes compute once the policy has stabilised. We stop when either (i)~the moving-average mean reward has no statistically significant positive slope in the last $W=40$ episodes (Kendall-$\tau$ $p$-value $\ge 0.05$) or (ii)~the policy entropy falls below $H_{\min}=0.5$ (almost-deterministic mask). A floor of $E_{\min}=200$ episodes guards against premature stopping on an unlucky early run. The hard cap $E_{\max}=300$ (or $80$ in the fixed-budget sweeps of Section~\ref{sec:experiments_sweep}) is only the fallback.
+
+\section{Segmentation}
+\label{sec:methods_seg}
+
+We use SAM~3.1~\cite{ravi2024sam2} as the primary segmentation model: given the source image and a short seg prompt, SAM~3.1 returns a pixel-level foreground mask. When SAM~3.1 returns an empty mask (which happens on scene-level prompts that do not point at a distinct object) the pipeline falls back to Grounding-DINO~\cite{liu2024groundingdino}+SAM~2 and then to CLIPSeg~\cite{luddecke2022image}.
+
+\section{Reward model}
+
+The vision model used in $f_{\text{fg}}$ and its paired text encoder $\psi$ in the delta embedding are both \texttt{google/siglip2-so400m-patch14-384}~\cite{tschannen2025siglip2}. SigLIP~2's sigmoid-pairwise loss produces smoother cosine-similarity landscapes than CLIP ViT-B/32 on our cropped-foreground inputs, which reduces per-episode reward variance.
+
+\section{Hyperparameters}
+
+Table~\ref{tab::reinforce_hparams} lists the REINFORCE defaults used in all 15 overnight bgrich experiments. They were frozen after the eight-config single-edit sweep of Section~\ref{sec:experiments_sweep}.
+
+\begin{table}[H]
+    \centering
+    \caption{REINFORCE defaults for FLUX.2.}
+    \begin{tabular}{ll}
+    \toprule
+    Backbone & FLUX.2-klein-base-9B (flow-matching) \\
+    Mask bits / denoising steps & $N=14$, $T=28$, repeat factor 2 \\
+    Batch size $K$ & 8 \\
+    Max / min episodes & $E_{\max}=300$ / $E_{\min}=200$ (80 in fixed-budget mode) \\
+    Learning rate & Adam, $\eta=10^{-2}$ \\
+    Entropy coefficient $\beta$ & $0.05$ \\
+    $\alpha$ in $R$ & 0.7 (bg-rich scenes), 0.5 (unknown prior) \\
+    Advantages & EMA baseline + per-batch std normalisation \\
+    Plateau early-stop window / $p$-value & $W=40$ / $p=0.05$ \\
+    Entropy early-stop & $H_{\min}=0.5$ \\
+    Segmentation & SAM~3.1 $\to$ Grounding-DINO+SAM~2 $\to$ CLIPSeg \\
+    Vision-language reward & \texttt{google/siglip2-so400m-patch14-384} \\
+    Guidance scale & 4.0, fixed noise seed 42 \\
+    Hardware & $1\times$A100 80~GB per edit \\
+    \bottomrule
+    \end{tabular}
+    \label{tab::reinforce_hparams}
+\end{table}

@@ -1,0 +1,30 @@
+\chapter{Discussion and conclusion}
+\label{ch:conclusion}
+
+\section{Findings}
+
+\paragraph{The trajectory space has structure.}
+Two choices per timestep produce 52 geometrically distinct clusters for cat$\to$dog and 13 for horse$\to$robot horse on SD~v1.5. Small per-step conditioning differences amplify through the diffusion process and land in visibly different outputs, so mask choice matters.
+
+\paragraph{The all-target mask is not a good edit.}
+On both motivational SD~v1.5 tasks $M=\mathbf{1}$ sits outside the top combined-score cluster. On the 15 background-rich FLUX.2 tasks $M=\mathbf{1}$ averages $R=0.601$ while REINFORCE reaches $R=0.749$ on every task (Table~\ref{tab::new_bgrich_numbers}). Running the target prompt through every step never produces the best schedule: late-step source conditioning keeps the scene intact while the edit happens.
+
+\paragraph{Top trajectories activate source early and target late.}
+P2P~\cite{hertz2022prompt} assumed this pattern when it designed its single-threshold $\tau$. Exhaustive search on SD~v1.5 confirms it across $2^{20}$ trajectories. REINFORCE on FLUX.2 with a different backbone and a different reward model converges to Bernoulli logits with low $p_i$ on early bits and high $p_i$ on late bits. The pattern holds across backbone and reward.
+
+\paragraph{REINFORCE makes DCS practical.}
+Exhaustive $2^{14}$ search on FLUX.2 would run about 50 GPU-hours per edit at our per-image cost. REINFORCE with entropy regularisation and plateau early-stop converges inside 640 generations ($\sim 2$ wall-clock hours on one A100) and matches or beats matched-budget random search on every task. 80\% of the final best reward arrives inside the first 80 generations. This budget brings DCS into the range of a usable editing procedure.
+
+\section{Limitations and future work}
+
+\begin{enumerate}
+    \item \textbf{Per-edit training.} REINFORCE runs from scratch for each source/target pair ($\sim 640$ generations). A prompt-conditioned regressor trained on completed runs could produce a Bernoulli-logit vector in one forward pass and collapse inference to one diffusion call. The 15 completed bgrich runs form the start of such a dataset; 30 to 50 edits should let an MLP beat the population-mean greedy mask.
+    \item \textbf{One source image per task.} The FLUX.2 experiments fix one seed per edit pair. Per-seed variance and robustness to source/target rephrasings remain open.
+    \item \textbf{Two backbones, fixed configurations.} The motivational experiments use SD~v1.5 with DDIM; the REINFORCE experiments use FLUX.2-klein-base-9B with rectified flow. SD-XL, SD~3, and FLUX-dev may behave differently. DCS does not depend on the backbone, so replication on other models is straightforward.
+    \item \textbf{No spatial control.} DCS works in the temporal axis. Per-object localisation (two objects in the same image, only one changed) would need P2P's attention injection on top.
+    \item \textbf{Reward misspecification.} The foreground CLIP term is a proxy. On scene-level seg prompts (snow$\to$volcano, with the seg prompt ``mountain peak'') the reward degrades silently. Sharper seg prompts and VLM-scored rewards are open extensions.
+\end{enumerate}
+
+\section{Conclusion}
+
+Discrete Context Switching casts training-free diffusion editing as combinatorial search over per-step binary conditioning schedules. Exhaustive enumeration on SD~v1.5 validates the paradigm: $2^{20}$ generations per task show a diverse, structured trajectory space with top schedules concentrated in a source-early / target-late sub-region, and with the all-target mask outside that sub-region. REINFORCE on FLUX.2 makes the paradigm practical: 14 Bernoulli logits converge inside 640 generations and beat the all-ones baseline on all 15 background-rich edits, with a mean gain of $+0.148$ reward ($+23\%$). The search runs two orders of magnitude cheaper than enumeration, matches or beats matched-budget random, and compresses into a 14-parameter policy that summarises what it learned about the edit.

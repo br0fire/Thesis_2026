@@ -1,14 +1,15 @@
 """
 Retroactively generate bg_mask_vis.jpg for experiments.
 
-Uses the same segmentation pipeline as reinforce_search.py (Grounding DINO +
-SAM 2 by default, CLIPSeg as fallback). Re-imports those helpers directly so
-the behavior stays in sync.
+Uses the same segmentation pipeline as reinforce_search.py (SAM 3.1 by default,
+with GDino+SAM2 and CLIPSeg as fallbacks). Re-imports those helpers directly
+so the behavior stays in sync.
 
 Usage:
-  python analysis/backfill_mask_vis.py              # skips existing
+  python analysis/backfill_mask_vis.py              # skips existing (SAM 3.1)
   python analysis/backfill_mask_vis.py --force      # regenerates all
-  python analysis/backfill_mask_vis.py --method clipseg   # use the old method
+  python analysis/backfill_mask_vis.py --method gdino_sam   # GDino+SAM2
+  python analysis/backfill_mask_vis.py --method clipseg     # legacy CLIPSeg
 """
 import argparse
 import os
@@ -79,7 +80,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--force", action="store_true")
     p.add_argument("--gpu", type=int, default=-1, help="-1 = CPU")
-    p.add_argument("--method", choices=["gdino_sam", "clipseg"], default="gdino_sam")
+    p.add_argument("--method", choices=["sam3", "gdino_sam", "clipseg"], default="sam3")
     args = p.parse_args()
 
     if args.gpu >= 0 and torch.cuda.is_available() and args.gpu < torch.cuda.device_count():
